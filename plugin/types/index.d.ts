@@ -18,7 +18,7 @@ export type LinkState = {
   screen: boolean
   /** Where sessions the Claude app starts or resumes open on this computer; `auto`: the desktop app if installed. */
   openIn: 'auto' | 'desktop' | 'terminal'
-  /** This computer's choice of connection: through the helper programs (`on`), never (`off`), or `auto`. */
+  /** This computer's choice of connection: the background service and helper programs (`on`), none (`off`), or `auto` (them, unless macOS refuses them). */
   helpers: 'auto' | 'on' | 'off'
   /** This session is connected from inside Claude, with no helper programs (the no-helper mode). */
   inside: boolean

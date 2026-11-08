@@ -1,9 +1,14 @@
 // This computer in Claude Bridge: its id (~/.config/claude-bridge/device.json, shared with the
-// device agent), and the device agent itself (connector/device.swift): started from inside
-// Claude, it answers for the computer (its projects, its sessions' history, starting, resuming,
-// renaming and forking sessions) for as long as Claude runs.
+// device agent), and the device agent itself (connector/device.swift), which answers for the
+// computer (its projects, its sessions' history, starting, resuming, renaming and forking
+// sessions).
+//
+// The device agent runs as a background service: a launchd agent, started by macOS at login and
+// kept running, so the computer stays reachable with Claude closed. Where macOS won't run it (a
+// managed Mac's "access denied"), Auto removes it at once and the sessions answer for the
+// computer instead, from inside Claude (inside.ts).
 
-import { chatBase, ensureBinary, helpersBlocked, usesHelpers } from './connector'
+import { chatBase, ensureBinary, helperSetting } from './connector'
 import { type Engine, errorText, note, rt } from './state'
 
 const LABEL = 'com.claudebridge.device'
@@ -28,11 +33,46 @@ export async function deviceId($: Engine): Promise<string> {
   return (rt.deviceId = id)
 }
 
-/** The old way, a launchd agent (before 1.2.0): macOS may restrict it as a separate background item. */
-const OLD_LABEL = 'com.claudebridge.device'
+/** A wait that is a `$` call, so it costs a hook none of its time budget (a `$.clock` sleep would). */
+async function pause($: Engine, seconds: number): Promise<void> {
+  await $.process.run(['/bin/sleep', String(seconds)]).catch(() => undefined)
+}
 
-/** The running agent's process id, from its lock file, or 0 where none runs. */
-async function runningAgent($: Engine, h: string): Promise<number> {
+function plist(binary: string, log: string): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key><array><string>${esc(binary)}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>${esc(log)}</string>
+  <key>StandardErrorPath</key><string>${esc(log)}</string>
+</dict>
+</plist>
+`
+}
+
+type Service = { uid: string; target: string; plistPath: string }
+
+async function service($: Engine, h: string): Promise<Service> {
+  const uid = (await $.process.run(['id', '-u'])).stdout.trim()
+  return { uid, target: `gui/${uid}/${LABEL}`, plistPath: `${h}/Library/LaunchAgents/${LABEL}.plist` }
+}
+
+/** The service's process id while launchd has it running, else 0. */
+async function servicePid($: Engine, s: Service): Promise<number> {
+  const r = await $.process.run(['launchctl', 'print', s.target]).catch(() => undefined)
+  if (!r || r.exitCode !== 0 || !/\bstate = running\b/.test(r.stdout)) return 0
+  return Number(r.stdout.match(/\bpid = (\d+)/)?.[1] ?? 0)
+}
+
+/** The process holding the device agent's lock (any copy, launchd's or not), or 0. */
+async function lockHolder($: Engine, h: string): Promise<number> {
   const pid = Number(String(await $.fs.read(`${h}/.config/claude-bridge/device.lock`).catch(() => '')).trim())
   if (!pid) return 0
   const alive = await $.process.run(['/bin/ps', '-o', 'comm=', '-p', String(pid)]).catch(() => undefined)
@@ -40,73 +80,102 @@ async function runningAgent($: Engine, h: string): Promise<number> {
 }
 
 /**
- * Keeps the device agent running, started from inside Claude (so macOS counts it as Claude's,
- * with Claude's permissions) rather than by launchd. Each session checks now and every 30 s: the
- * agent lives on after the session that started it, until Claude itself quits (device.swift),
- * and only one runs per computer.
+ * Sessions starting together take turns installing the service (a lock folder), so none of them
+ * mistakes another's restart for macOS refusing it. A lock over a minute old was left behind.
  */
-export async function ensureDeviceAgent($: Engine): Promise<void> {
-  if (rt.deviceAgentChecked) return
-  rt.deviceAgentChecked = true
-  await keepAgentRunning($)
-  rt.agentTimer?.cancel()
-  rt.agentTimer = $.clock.every(30_000, () => void keepAgentRunning($))
-}
-
-async function keepAgentRunning($: Engine): Promise<void> {
-  try {
-    // Not where helper programs don't run: the sessions answer for the computer (inside.ts).
-    if (!(await usesHelpers($))) {
-      rt.agentTimer?.cancel()
-      rt.agentTimer = undefined
-      return
-    }
-    const h = await home($)
-    await deviceId($)
-    if ((await computerSetting($, 'chatUrl')) !== chatBase()) await setComputerSetting($, 'chatUrl', chatBase())
-    await retireLaunchAgent($, h)
-
-    const { path: binary, rebuilt } = await ensureBinary($, 'device')
-    const running = await runningAgent($, h)
-    if (running && !rebuilt) return
-    if (running) {
-      // A new build: the old agent makes way for it.
-      await $.process.run(['kill', String(running)]).catch(() => undefined)
-      await $.clock.sleep(500)
-    }
-    // Started from this session's shell, so it is Claude's; it detaches itself (setsid) and
-    // watches the Claude app (or this session) to end with it.
-    const log = `${h}/Library/Logs/claude-bridge-device.log`
-    const started = await $.process.run([
-      '/bin/sh',
-      '-c',
-      'session=$PPID; nohup "$0" --watch-pid "$session" >> "$1" 2>&1 < /dev/null &',
-      binary,
-      log,
-    ])
-    await note($, started.exitCode === 0 ? `device agent started${rebuilt ? ' (new build)' : ''}` : `device agent didn’t start: ${started.stderr.slice(0, 200)}`)
-    // One macOS refuses to run is gone at once; twice in a row, and this computer stops trying.
-    $.clock.after(3000, async () => {
-      if (await runningAgent($, h)) {
-        rt.agentRefused = 0
-        return
+async function withServiceLock<T>($: Engine, h: string, work: () => Promise<T>): Promise<T | undefined> {
+  const lock = `${h}/.config/claude-bridge/service.lock`
+  for (let i = 0; i < 20; i++) {
+    const took = await $.process.run(['mkdir', lock]).catch(() => undefined)
+    if (took?.exitCode === 0) {
+      try {
+        return await work()
+      } finally {
+        await $.process.run(['rm', '-rf', lock]).catch(() => undefined)
       }
-      rt.agentRefused++
-      if (rt.agentRefused >= 2) await helpersBlocked($, 'the device agent didn’t stay running')
-    })
-  } catch (error) {
-    await note($, `device agent: ${errorText(error)}`)
+    }
+    const stat = await $.fs.stat(lock).catch(() => undefined)
+    if (stat && (await $.clock.now()) - stat.mtimeMs > 60_000) await $.process.run(['rm', '-rf', lock]).catch(() => undefined)
+    else await pause($, 1)
   }
+  return undefined
 }
 
-/** Removes the launchd agent earlier versions installed, once, so no separate background item stays. */
-async function retireLaunchAgent($: Engine, h: string): Promise<void> {
-  const plist = `${h}/Library/LaunchAgents/${OLD_LABEL}.plist`
-  if (!(await $.fs.stat(plist).catch(() => undefined))) return
-  const uid = (await $.process.run(['id', '-u'])).stdout.trim()
-  await $.process.run(['launchctl', 'bootout', `gui/${uid}/${OLD_LABEL}`]).catch(() => undefined)
-  await $.process.run(['rm', '-f', plist]).catch(() => undefined)
-  await note($, 'removed the old launchd agent')
+/**
+ * Makes sure the background service runs, installing or updating it where needed:
+ * - `running`: it runs (as installed now, or already);
+ * - `blocked`: macOS wouldn't run it (refused, or ended at once);
+ * - `unavailable`: there is no program to run (no prebuilt one for this copy, and no Xcode).
+ */
+export async function ensureBackgroundService($: Engine): Promise<'running' | 'blocked' | 'unavailable'> {
+  const h = await home($)
+  await deviceId($)
+  if ((await computerSetting($, 'chatUrl')) !== chatBase()) await setComputerSetting($, 'chatUrl', chatBase())
+  let binary: { path: string; rebuilt: boolean }
+  try {
+    binary = await ensureBinary($, 'device')
+  } catch (error) {
+    await note($, `no device agent program: ${errorText(error)}`)
+    return 'unavailable'
+  }
+  const s = await service($, h)
+  const wanted = plist(binary.path, `${h}/Library/Logs/claude-bridge-device.log`)
+  const current = String(await $.fs.read(s.plistPath).catch(() => ''))
+  // The usual case, every session after the first: nothing to do.
+  if (current === wanted && !binary.rebuilt && (await servicePid($, s))) return 'running'
+
+  const outcome = await withServiceLock($, h, async () => {
+    // Another session may have finished it while this one waited.
+    if ((await computerSetting($, 'helpersBlocked')) === true && (await helperSetting($)) === 'auto') return 'blocked' as const
+    const fresh = String(await $.fs.read(s.plistPath).catch(() => ''))
+    if (fresh === wanted && !binary.rebuilt && (await servicePid($, s))) return 'running' as const
+
+    // A copy started from inside Claude (1.2.0 and 1.3.0) holds the lock launchd's copy needs.
+    const stray = await lockHolder($, h)
+    if (stray && stray !== (await servicePid($, s))) {
+      await $.process.run(['kill', String(stray)]).catch(() => undefined)
+      for (let i = 0; i < 5 && (await lockHolder($, h)); i++) await pause($, 1)
+    }
+    await $.process.run(['launchctl', 'bootout', s.target]).catch(() => undefined)
+    await $.process.run(['mkdir', '-p', `${h}/Library/LaunchAgents`])
+    await $.fs.write(s.plistPath, wanted)
+    const boot = await $.process.run(['launchctl', 'bootstrap', `gui/${s.uid}`, s.plistPath]).catch(error => ({ exitCode: 1, stdout: '', stderr: errorText(error) }))
+    if (boot.exitCode !== 0) await note($, `launchctl bootstrap: ${boot.stderr.trim().slice(0, 200)}`)
+
+    // Running now, and still the same process a moment later: macOS let it run.
+    await pause($, 2)
+    const first = await servicePid($, s)
+    await pause($, 2)
+    const second = await servicePid($, s)
+    if (first && first === second) {
+      await note($, current ? 'background service updated' : 'background service installed')
+      return 'running' as const
+    }
+    // Only a refusal counts as blocked: a copy of the agent running at all (one an older version
+    // of the plugin started, which also removes the service) means helper programs run here.
+    if (await lockHolder($, h)) {
+      await note($, 'another copy of the device agent runs (started by an older version); the service waits for it')
+      return 'running' as const
+    }
+    if (!(await $.fs.exists(s.plistPath).catch(() => false))) return 'running' as const
+    return 'blocked' as const
+  })
+  if (outcome) return outcome
+  // The lock stayed taken: judge by what runs, never "blocked" on a guess.
+  return (await servicePid($, s)) || (await lockHolder($, h)) ? 'running' : 'unavailable'
+}
+
+/** Removes the background service: stopped, and gone from login. Any copy started otherwise stops too. */
+export async function removeBackgroundService($: Engine): Promise<void> {
+  const h = await home($)
+  const s = await service($, h)
+  const installed = await $.fs.exists(s.plistPath).catch(() => false)
+  const loaded = (await $.process.run(['launchctl', 'print', s.target]).catch(() => undefined))?.exitCode === 0
+  if (loaded) await $.process.run(['launchctl', 'bootout', s.target]).catch(() => undefined)
+  if (installed) await $.process.run(['rm', '-f', s.plistPath]).catch(() => undefined)
+  const stray = await lockHolder($, h)
+  if (stray) await $.process.run(['kill', String(stray)]).catch(() => undefined)
+  if (installed || loaded || stray) await note($, 'background service removed')
 }
 
 /** A setting for this whole computer, kept in config.json where the device agent reads it too. */
@@ -127,13 +196,4 @@ export async function setComputerSetting($: Engine, name: string, value: unknown
     // not written yet
   }
   await $.fs.write(path, JSON.stringify({ ...config, [name]: value }))
-}
-
-/** Stops the device agent (Claude Bridge turned off); the next ensureDeviceAgent starts it again. */
-export async function stopDeviceAgent($: Engine): Promise<void> {
-  rt.deviceAgentChecked = false
-  rt.agentTimer?.cancel()
-  rt.agentTimer = undefined
-  const running = await runningAgent($, await home($))
-  if (running) await $.process.run(['kill', String(running)]).catch(() => undefined)
 }

@@ -69,12 +69,6 @@ export const rt = {
   traceFile: '/tmp/claude-bridge.log',
   /** This computer's id, once read. */
   deviceId: '' as string,
-  /** The device agent was checked (installed, current, running) since this load. */
-  deviceAgentChecked: false,
-  /** Starts of the device agent in a row that it didn't survive (refused by macOS, say). */
-  agentRefused: 0,
-  /** Checks every 30 s that the device agent still runs. */
-  agentTimer: undefined as Timer | undefined,
   /** When Make a new key was first pressed, for its confirming second press. */
   newKeyAskedAt: 0,
   /** When switching away from this computer's own account was first pressed, for its confirming second press. */

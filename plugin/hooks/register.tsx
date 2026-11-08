@@ -14,7 +14,7 @@ import { changesOfLastTurn, describeTool } from './claude'
 import { type Picture, prepareImage } from './images'
 import { refreshBrief, sideFinished } from './side'
 import { type EventPicture, KEY_PATTERN, bridgeKey, helperSetting, post, reportState, sendEvent, setWatched, startConnector, stopConnector } from './connector'
-import { computerSetting, setComputerSetting, stopDeviceAgent } from './device'
+import { computerSetting, removeBackgroundService, setComputerSetting } from './device'
 import { startNewAccount, switchToLinking } from './link'
 import { answerOnScreen, askThroughApp, pick, sendPicks } from './questions'
 import {
@@ -55,11 +55,11 @@ async function setEnabled($: Engine, on: boolean): Promise<void> {
   await $.store.set('enabled', on)
   await update($, link, s => ({ ...s, enabled: on }))
   if (on) {
-    // The device agent follows once the connector runs (connector.ts), where helper programs may run.
+    // The background service comes up first, where macOS lets it run (connector.ts).
     await startConnector($)
   } else {
     await stopConnector($)
-    await stopDeviceAgent($)
+    await removeBackgroundService($)
   }
 }
 
@@ -111,15 +111,16 @@ async function setOpenIn($: Engine, where: 'auto' | 'desktop' | 'terminal'): Pro
 }
 
 /**
- * How this computer connects (shared by its sessions): `on` uses the helper programs (and tries
- * them again where they were found blocked), `off` never does, `auto` uses them unless blocked.
+ * How this computer connects (shared by its sessions): `on` uses the background service and
+ * helper programs (and tries them again where they were found blocked), `off` never does and
+ * removes the service, `auto` uses them unless macOS refused them here.
  * Each session here picks the change up when it next connects; this one reconnects now.
  */
 async function setHelpers($: Engine, helpers: 'auto' | 'on' | 'off'): Promise<void> {
   await setComputerSetting($, 'helpers', helpers === 'auto' ? null : helpers)
   if (helpers === 'on') await setComputerSetting($, 'helpersBlocked', null)
   await update($, link, s => ({ ...s, helpers }))
-  if (helpers === 'off') await stopDeviceAgent($)
+  if (helpers === 'off') await removeBackgroundService($)
   if (!(await read($, link)).enabled) return
   await stopConnector($)
   for (let i = 0; i < 30 && bridgeUp(); i++) await $.clock.sleep(100)

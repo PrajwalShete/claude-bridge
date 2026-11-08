@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 
 import { type Engine, type Process, cleanPrompt, errorText, isPersonPrompt, note, rt, INITIAL_LINK, INITIAL_CLAUDE } from './state'
-import { computerSetting, deviceId, ensureDeviceAgent, setComputerSetting } from './device'
+import { computerSetting, deviceId, ensureBackgroundService, removeBackgroundService, setComputerSetting } from './device'
 import { insideRoute, startInside, stopInside } from './inside'
 import { startLinking } from './link'
 import { answerTool } from './tools'
@@ -167,10 +167,10 @@ export async function post($: Engine, route: string, body: unknown): Promise<unk
 }
 
 /**
- * How this computer connects: through the plugin's helper programs (the connector and the device
- * agent), or from inside Claude with none (inside.ts). The panel's "Helper programs" setting:
- * `auto` (the default) uses them unless this computer was found to block them, `on` always,
- * `off` never.
+ * How this computer connects: through the plugin's helper programs (the device agent, a
+ * background service macOS starts at login, and a connector per session), or from inside Claude
+ * with none (inside.ts). The panel's "Background service" setting: `auto` (the default) uses
+ * them unless this computer was found to refuse them, `on` always, `off` never.
  */
 export type HelperSetting = 'auto' | 'on' | 'off'
 
@@ -188,10 +188,17 @@ export async function usesHelpers($: Engine): Promise<boolean> {
   return (await computerSetting($, 'helpersBlocked')) !== true
 }
 
-/** This computer wouldn't run a helper program: from now on it connects from inside Claude (on Auto). */
+/**
+ * This computer wouldn't run a helper program: on Auto, it connects from inside Claude from now
+ * on, and the background service is removed at once, so macOS doesn't keep asking.
+ */
 export async function helpersBlocked($: Engine, why: string): Promise<boolean> {
-  if ((await helperSetting($)) !== 'auto') return false
+  if ((await helperSetting($)) !== 'auto') {
+    await note($, `a helper program didn't run (${why}); kept, as this computer is set to use them`)
+    return false
+  }
   await setComputerSetting($, 'helpersBlocked', true)
+  await removeBackgroundService($)
   await note($, `helper programs blocked here (${why}); connecting from inside Claude from now on`)
   return true
 }
@@ -216,7 +223,14 @@ export async function startConnector($: Engine): Promise<void> {
     const project = folder.split('/').filter(Boolean).pop() ?? 'project'
     const device = await deviceId($)
     const inside = () => startInside($, { relay: chatBase().replace(/^ws/, 'http'), key, session, project, folder, device })
-    if (!(await usesHelpers($))) return await inside()
+    if (!(await usesHelpers($))) {
+      await removeBackgroundService($)
+      return await inside()
+    }
+    // The background service first: where macOS refuses it, no connector is tried (one prompt at most).
+    const background = await ensureBackgroundService($)
+    if (background === 'unavailable') return await inside()
+    if (background === 'blocked' && (await helpersBlocked($, 'the background service didn’t stay running'))) return await inside()
     let binary: string
     try {
       binary = (await ensureBinary($, 'connector')).path
@@ -287,8 +301,6 @@ async function pump($: Engine, stream: Process['stream']): Promise<void> {
         }
         if (event.t === 'started') {
           rt.connectorRan = true
-          // The connector runs, so helper programs run here: the device agent can too.
-          void ensureDeviceAgent($)
         } else if (event.t === 'link') {
           const wasConnected = (await read($, link)).connected
           await update($, link, s => ({ ...s, connected: event.state === 'connected', watched: event.watched, paused: event.paused === true }))

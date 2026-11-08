@@ -26,7 +26,7 @@ export type Actions = {
   setAskFirst: (on: boolean) => void
   setScreen: (on: boolean) => void
   setOpenIn: (where: 'auto' | 'desktop' | 'terminal') => void
-  /** How this computer connects: helper programs, none (from inside Claude), or Auto. */
+  /** How this computer connects: the background service and helper programs, none (from inside Claude), or Auto. */
   setHelpers: (helpers: 'auto' | 'on' | 'off') => void
   newKey: () => void
   copy: (text: string, surface: RenderSurface) => void
@@ -54,8 +54,8 @@ const OPEN_IN = [
 
 const HELPERS = [
   { value: 'auto', label: 'Auto' },
-  { value: 'on', label: 'Use them' },
-  { value: 'off', label: 'Inside Claude only' },
+  { value: 'on', label: 'On' },
+  { value: 'off', label: 'Off (inside Claude only)' },
 ]
 
 const helperChoice = (v: string): 'auto' | 'on' | 'off' => (v === 'on' || v === 'off' ? v : 'auto')
@@ -273,10 +273,10 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions, surface?: RenderSurf
           {Select &&
             row('connection-row', ICONS.connection, 'Connection', <Select key="enabled" value={m.link.enabled ? 'on' : 'off'} options={ON_OFF} onSelect={v => a.setEnabled(v === 'on')} />)}
           {Select &&
-            row('helpers-row', ICONS.helpers, 'Helper programs', <Select key="helpers" value={m.link.helpers} options={HELPERS} onSelect={v => a.setHelpers(helperChoice(v))} />)}
+            row('helpers-row', ICONS.helpers, 'Background service', <Select key="helpers" value={m.link.helpers} options={HELPERS} onSelect={v => a.setHelpers(helperChoice(v))} />)}
           {m.link.inside && (
             <Text size="footnote" dimColor>
-              Connected from inside Claude, with no helper programs: this computer answers the Claude app while a Claude Code session is open on it.
+              Connected from inside Claude, with no background service (macOS refused it here, or it is off): this computer answers the Claude app while a Claude Code session is open on it.
             </Text>
           )}
         </Box> : undefined,
@@ -372,7 +372,7 @@ export function terminalView(ui: Elements['terminal'], m: ViewModel, a: Actions)
         <Select key="open-in" label="Sessions open in " value={m.link.openIn} options={OPEN_IN} onSelect={v => a.setOpenIn(v === 'desktop' || v === 'terminal' ? v : 'auto')} />
         <Select key="screen" label="Screenshots " value={m.link.screen ? 'on' : 'off'} options={ON_OFF} onSelect={v => a.setScreen(v === 'on')} />
         <Select key="enabled" label="Connection " value={m.link.enabled ? 'on' : 'off'} options={ON_OFF} onSelect={v => a.setEnabled(v === 'on')} />
-        <Select key="helpers" label="Helper programs " value={m.link.helpers} options={HELPERS} onSelect={v => a.setHelpers(helperChoice(v))} />
+        <Select key="helpers" label="Background service " value={m.link.helpers} options={HELPERS} onSelect={v => a.setHelpers(helperChoice(v))} />
         {m.link.inside && <Text dimColor>Connected from inside Claude (no helper programs)</Text>}
       </Box>
       {messages.length > 0 && (

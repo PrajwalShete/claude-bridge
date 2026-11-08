@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0 (2026-11-09)
+
+- **The background service is back** where macOS allows it: the device agent runs as a launchd
+  agent that macOS starts at login, so the computer stays reachable with Claude closed.
+- **Auto tries it first, and falls back:** where macOS refuses it, the plugin removes it at once
+  (no prompt coming back) and connects from inside Claude from then on.
+- The panel's setting is now **Background service**: Auto, On, Off.
+- Sessions still on 1.4.0 replace the service with their own copy until they restart.
+
 ## 1.4.0 (2026-11-09)
 
 - **Works on Macs that block the helper programs.** Where macOS refuses to run the plugin's two

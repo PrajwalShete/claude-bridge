@@ -2,6 +2,27 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-09: the background service is back, and Auto falls back
+
+1. **On Macs that allow it, the device agent is a launchd background service again** (as in
+   1.1.0), at Prajwal's request: macOS starts it at login and keeps it running, so the computer
+   stays reachable with Claude closed. 1.2.0 had moved it inside Claude, which kept it alive only
+   while the desktop app ran, and still didn't help where macOS refuses the program itself.
+2. **Auto tries the background service first.** It counts as running only when launchd has it
+   running and the same process is still there two seconds later. Otherwise:
+   - the service is removed at once (stopped, its plist deleted), so macOS doesn't keep asking;
+   - the computer is marked as refusing helper programs, and its sessions connect from inside
+     Claude from then on;
+   - no connector is tried after a refused service, so there is one prompt at most.
+3. **"Blocked" needs a refusal, not a guess.** Sessions still on 1.4.0 remove the service and
+   start their own copy (their retirement of the old launchd agent); a copy of the agent running
+   at all means helper programs run there, so it never counts as blocked. Once those sessions
+   restart on 1.5.0 the service stays.
+4. **The setting is now "Background service":** Auto, On (always, and tries again on a Mac marked
+   as refusing), Off (removes it; inside Claude only). `CLAUDE_BRIDGE_HELPERS` still wins.
+5. **Waits are `$` calls** (`/bin/sleep` through `$.process.run`), which cost a hook none of its
+   time budget; a `$.clock` sleep would.
+
 ## 2026-11-09: no helper programs where macOS refuses them
 
 1. **The problem.** A managed Mac mini refused to run `claude-bridge-device` ("access denied"),

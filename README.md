@@ -63,19 +63,19 @@ A copy loaded that way takes precedence over the synced one of the same name.
 Set your relay in the plugin's options (`relayUrl`, and `chatUrl` if sessions should connect
 through a different hostname).
 
-Each computer runs a small **device agent**, started from inside Claude by its sessions, so macOS
-counts it as part of Claude, with Claude's permissions; there is no separate background item to
-allow. It answers for the computer while the Claude desktop app runs, even with no session open,
-and quits with it. Its programs are in `~/.config/claude-bridge/bin/`, its log in
-`~/Library/Logs/claude-bridge-device.log`. `/bridge off` stops it.
+Each computer runs a small **device agent** as a **background service**: a launchd agent that
+macOS starts at login and keeps running, so the computer stays reachable with Claude closed. The
+first session installs it (macOS shows its usual "background item added" notice). Its programs
+are in `~/.config/claude-bridge/bin/`, its log in `~/Library/Logs/claude-bridge-device.log`.
+`/bridge off` removes it.
 
-**Macs that refuse the helper programs** (a managed Mac's "access denied"): each session then
-talks to the relay itself, over HTTP, from inside Claude Code, and answers for its computer too.
-The plugin switches by itself the first time a helper won't run, and remembers it. Choose it
-yourself in the panel (Settings, **Helper programs**: Auto, Use them, Inside Claude only), or set
-it once in `~/.claude/settings.json` so no helper is ever launched there:
-`{ "env": { "CLAUDE_BRIDGE_HELPERS": "off" } }`. Without the helpers, the computer answers the
-Claude app while a Claude Code session is open on it.
+**Macs that refuse it** (a managed Mac's "access denied"): on **Auto**, the default, the plugin
+tries the background service first; if macOS won't run it, the plugin removes it at once, so the
+prompt doesn't come back, and from then on each session talks to the relay itself, over HTTP,
+from inside Claude Code, answering for its computer too. Choose yourself in the panel (Settings,
+**Background service**: Auto, On, Off), or set it once in `~/.claude/settings.json`, where it
+wins: `{ "env": { "CLAUDE_BRIDGE_HELPERS": "off" } }` never installs or launches anything. Without
+the service, the computer answers the Claude app while a Claude Code session is open on it.
 
 ### 3. Your first computer
 

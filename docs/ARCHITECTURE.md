@@ -59,20 +59,19 @@ A Cloudflare Worker.
 
 ## Device agent (`plugin/connector/device.swift`)
 
-A small native program per computer, started from inside Claude, never by launchd:
-- **A session starts it,** so macOS counts it as part of Claude and Claude's permissions are its
-  own. Its responsible process is Claude Code's.
+A small native program per computer, run as a **background service**: a launchd agent
+(`~/Library/LaunchAgents/com.claudebridge.device.plist`, `RunAtLoad`, `KeepAlive`) that macOS
+starts at login and keeps running.
+- **A session installs it** at its start, where it isn't installed, current and running, and
+  checks that macOS lets it run: running, and the same process two seconds later. Sessions
+  starting together take turns (a lock folder).
+- **Where macOS refuses it** (on Auto), the session removes it at once and records that this
+  computer refuses helper programs: from then on its sessions connect from inside Claude
+  ([below](#without-helper-programs-pluginhooksinsidets)).
 - **One copy per computer:** it holds `~/.config/claude-bridge/device.lock`, and a second copy
-  exits.
-- **It outlives the session that started it,** in a process group of its own.
-- **It lives as long as Claude does:** it watches the Claude desktop app (or, from a terminal,
-  the session that started it) and quits with it.
+  exits. A copy an older version started from inside Claude is stopped first.
 
-Each session checks every 30 s that it runs. The next session after a quit starts it again, and
-a new build of it replaces the running one. A launchd agent from earlier versions is removed,
-since a managed Mac may block one as a separate background item.
-
-While Claude runs, it keeps the computer reachable with no session open, and answers what only
+It keeps the computer reachable with no session open, and Claude closed, and answers what only
 the computer knows:
 
 | Call | Does |
@@ -109,7 +108,8 @@ starts on the computer.
 
 ## Without helper programs (`plugin/hooks/inside.ts`)
 
-Where macOS won't run the helper programs, each session reaches the relay itself, over HTTP,
+Where macOS won't run the helper programs (or the person turned the background service off),
+each session reaches the relay itself, over HTTP,
 from inside Claude Code: one request waits at the relay (`POST /peer`, held up to 25 s) for the
 app's calls, and what the session says goes at once. The session also answers for its computer
 (`computer.ts`, the device agent's jobs in TypeScript), and Claude Code's questions wait on a

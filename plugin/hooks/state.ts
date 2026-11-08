@@ -67,6 +67,8 @@ export const rt = {
   agentTimer: undefined as Timer | undefined,
   /** When Make a new key was first pressed, for its confirming second press. */
   newKeyAskedAt: 0,
+  /** When switching away from this computer's own account was first pressed, for its confirming second press. */
+  switchAskedAt: 0,
   /** This session puts the app's messages in its prompt box instead of running them. */
   askFirst: false,
   /** Waiting for this computer to be linked from the Claude app (link.ts). */

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0 (2026-11-09)
+
+- **One Connection switch in the panel:** Own account (URL and key for the Claude app) or Link
+  with a code, either at any time. An owned account's key is kept aside, and restored on
+  switching back.
+
 ## 1.2.0 (2026-11-09)
 
 - **The device agent runs inside Claude.** Sessions start it, so macOS counts it as part of Claude,

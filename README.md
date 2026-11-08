@@ -70,15 +70,18 @@ and quits with it. Its programs are in `~/.config/claude-bridge/bin/`, its log i
 
 ### 3. Your first computer
 
-Open the Claude Bridge panel (the small "● Bridge" button below the prompt, or `/bridge`) and
-choose **This is my first computer**. Then, in the Claude app: Settings, Connectors, Add custom
+Open the Claude Bridge panel (the small "● Bridge" button below the prompt, or `/bridge`) and, in
+**Connection**, choose **Own account**. Then, in the Claude app: Settings, Connectors, Add custom
 connector with the panel's connector URL, and paste the key on the page that opens.
 
 ### 4. Every other computer
 
-Its panel shows a code. Tell the Claude app "link my computer, code K7Q2 9FMX 3HDA": it connects
+Its panel's **Connection** shows a code (**Link with a code**, the setting for any computer
+with no account yet). Tell the Claude app "link my computer, code K7Q2 9FMX 3HDA": it connects
 a few seconds later, with a credential of its own (the account's key never leaves your first
-computer). `/bridge key <key>` still works where you'd rather copy the key.
+computer). The switch goes both ways: a computer that owns an account keeps its key aside when
+it links instead (`key.bak`) and gets it back on **Own account**. `/bridge key <key>` still
+works where you'd rather copy the key.
 
 ## Tools the Claude app gets
 

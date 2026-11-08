@@ -15,7 +15,7 @@ import { type Picture, prepareImage } from './images'
 import { refreshBrief, sideFinished } from './side'
 import { type EventPicture, KEY_PATTERN, bridgeKey, post, reportState, sendEvent, setWatched, startConnector, stopConnector } from './connector'
 import { computerSetting, ensureDeviceAgent, setComputerSetting, stopDeviceAgent } from './device'
-import { startNewAccount } from './link'
+import { startNewAccount, switchToLinking } from './link'
 import { answerOnScreen, askThroughApp, pick, sendPicks } from './questions'
 import {
   type Engine,
@@ -133,6 +133,29 @@ async function keepForkedSetting($: Engine, forkNote: string): Promise<void> {
   await note($, `side chat set to ${model}${effort ? ` at ${effort} effort` : ''}`)
 }
 
+/**
+ * The Connection switch: own an account (URL and key for the Claude app) or link with a code.
+ * Leaving an account this computer owns takes a second press: it then leaves that account.
+ */
+async function setConnectMode($: Engine, mode: 'own' | 'link'): Promise<void> {
+  const now = await read($, link)
+  const owns = now.key.startsWith('cbrg_')
+  if (mode === 'own') {
+    if (!owns) await startNewAccount($)
+    return
+  }
+  if (owns) {
+    const at = await $.clock.now()
+    if (at - rt.switchAskedAt > 5_000) {
+      rt.switchAskedAt = at
+      $.ui.toast('Choose Link with a code again within 5 seconds: this computer leaves its own account (its key is kept, and comes back if you switch back).', { timeoutMs: 5_000 })
+      return
+    }
+    rt.switchAskedAt = 0
+  }
+  await switchToLinking($)
+}
+
 /** A new key cuts off the Claude app and every other computer: the first press only warns. */
 async function confirmNewKey($: Engine): Promise<void> {
   const now = await $.clock.now()
@@ -166,6 +189,7 @@ function actionsFor($: Engine): Actions {
     answerOnScreen: () => run('answer', answerOnScreen($)),
     openPane: () => run('open', openPane($)),
     startNewAccount: () => run('new account', startNewAccount($)),
+    setConnectMode: mode => run('connection', setConnectMode($, mode)),
   }
 }
 
@@ -464,6 +488,6 @@ export const register: Register = (on, config) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const model = await viewModel($, e.viewport?.rows ?? 24)
     if (e.surface === 'terminal') return terminalView($.ui.resolve(e), model, actionsFor($))
-    return panelView($.ui.resolve(e), model, actionsFor($))
+    return panelView($.ui.resolve(e), model, actionsFor($), e.surface)
   })
 }

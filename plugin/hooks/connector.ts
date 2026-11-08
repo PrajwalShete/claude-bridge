@@ -60,7 +60,7 @@ export const KEY_PATTERN = /^cbrg_[A-Za-z0-9_-]{40,64}$/
 export const DEVICE_CREDENTIAL = /^cbd_([a-f0-9]{20})_([A-Za-z0-9_-]{40,64})$/
 
 /** The computer's key lives in ~/.config/claude-bridge/key, shared by every session. */
-async function keyPath($: Engine): Promise<string> {
+export async function keyPath($: Engine): Promise<string> {
   return `${(await $.env.get('HOME')) ?? '/tmp'}/.config/claude-bridge/key`
 }
 

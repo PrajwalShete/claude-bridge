@@ -10,7 +10,7 @@ test('a computer not linked yet shows how to link it, on every surface', async (
   for (const surface of ['desktop', 'terminal', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ text: /Not linked|Link this computer/ })).toBeDefined()
-    expect(await ui.find({ key: 'new-account' })).toBeDefined()
+    expect(await ui.find({ key: surface === 'terminal' ? 'new-account' : 'connect-mode' })).toBeDefined()
     await ui.unmount()
   }
 })
@@ -29,6 +29,7 @@ test('with the account key, the connect steps show; Settings opens on a press', 
   await ui.press({ key: 'settings-toggle' })
   expect(await ui.find({ key: 'copy-url' })).toBeDefined()
   expect(await ui.find({ key: 'copy-key' })).toBeDefined()
+  expect(await ui.find({ key: 'connect-mode' })).toBeDefined()
   expect(await ui.find({ key: 'enabled' })).toBeDefined()
   expect(await ui.find({ key: 'ask-first' })).toBeDefined()
   expect(await ui.find({ key: 'screen' })).toBeDefined()
@@ -41,7 +42,9 @@ test('a computer linked from the app shows it is linked, and no key to copy', as
   const linked = { ...LINKED, key: 'cbd_0123456789abcdef0123_' + 'b'.repeat(64) }
   on('state.get', ($, e, next) => (e.key === 'link' ? { value: { value: linked, version: 1 } } : next(e)))
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await ui.find({ text: /Linked from the Claude app/ })).toBeDefined()
+  expect(await ui.find({ text: /Linked to an account/ })).toBeDefined()
+  expect(await ui.find({ key: 'relink' })).toBeDefined()
+  expect(await ui.find({ key: 'connect-mode' })).toBeDefined()
   expect(await ui.find({ key: 'copy-key' })).toBeUndefined()
   await ui.unmount()
 })

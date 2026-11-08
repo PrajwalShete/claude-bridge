@@ -7,7 +7,7 @@ sessions, on every computer linked to your account.
 ## Setup
 
 - **First computer:** open the Claude Bridge panel (the small "● Bridge" button below the prompt,
-  or `/bridge`), choose **This is my first computer**, then add the connector URL in the Claude
+  or `/bridge`), choose **Own account** under Connection, then add the connector URL in the Claude
   app (Settings, Connectors, Add custom connector) and paste the key.
 - **Every other computer:** nothing to install when the plugin is saved to your Claude account.
   Its panel shows a code; tell the Claude app "link my computer, code …".

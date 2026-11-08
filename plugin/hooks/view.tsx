@@ -35,6 +35,8 @@ export type Actions = {
   openPane: () => void
   /** The first computer of an account: make its key here. */
   startNewAccount: () => void
+  /** The Connection switch: this computer owns an account, or links to one with a code. */
+  setConnectMode: (mode: 'own' | 'link') => void
 }
 
 const ON_OFF = [
@@ -46,6 +48,11 @@ const OPEN_IN = [
   { value: 'auto', label: 'Auto' },
   { value: 'desktop', label: 'Desktop app' },
   { value: 'terminal', label: 'Terminal' },
+]
+
+const CONNECT_MODES = [
+  { value: 'own', label: 'Own account' },
+  { value: 'link', label: 'Link with a code' },
 ]
 
 const MESSAGES = [
@@ -98,12 +105,16 @@ const ICONS = {
 const DIVIDER =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1" viewBox="0 0 1000 1" preserveAspectRatio="none"><rect width="1000" height="1" fill="rgba(128,128,128,0.28)"/></svg>'
 
-export function panelView(ui: Ui, m: ViewModel, a: Actions) {
-  const { Box, Text, Button, Select, Svg } = ui
+export function panelView(ui: Ui, m: ViewModel, a: Actions, surface?: RenderSurface) {
+  const { Box, Text, Button, Svg } = ui
+  // The phone draws no drop-down yet (Elements['mobile']): it gets buttons instead.
+  const Select = surface === 'mobile' ? undefined : ui.Select
   const l = linkLine(m.link)
   const messages = appMessages(m)
   const setupShown = m.setupOpen || !m.link.connected
   const live = m.link.enabled && m.link.connected
+  const owns = m.link.key.startsWith('cbrg_')
+  const code = m.link.linkCode ? m.link.linkCode.replace(/(.{4})(?=.)/g, '$1 ') : ''
 
   /** One row: icon and label on the left, its value or control on the right, one line. */
   const row = (key: string, icon: string, label: string, control: RenderChildren) => (
@@ -152,28 +163,6 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions) {
         </Box>,
       )}
 
-      {!m.link.key && m.link.enabled && divider('link-divider')}
-      {!m.link.key &&
-        m.link.enabled &&
-        section(
-          'link',
-          'Link this computer',
-          <Box flexDirection="column" gap="sm">
-            {row(
-              'code-row',
-              ICONS.key,
-              m.link.linkCode ? m.link.linkCode.replace(/(.{4})(?=.)/g, '$1 ') : 'Making a code…',
-              m.link.linkCode ? <Button key="copy-code" variant="secondary" label="Copy" onPress={p => a.copy(m.link.linkCode, p.surface)} /> : undefined,
-            )}
-            <Text size="footnote" dimColor>
-              Tell the Claude app: “link my computer, code {m.link.linkCode ? m.link.linkCode.replace(/(.{4})(?=.)/g, '$1 ') : '…'}”. It connects by itself a few seconds later.
-            </Text>
-            <Box flexDirection="row">
-              <Button key="new-account" plain dimColor label="This is my first computer: start a new account" onPress={a.startNewAccount} />
-            </Box>
-          </Box>,
-        )}
-
       {m.question && divider('question-divider')}
       {m.question &&
         section(
@@ -206,33 +195,48 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions) {
           </Box>,
         )}
 
-      {m.link.key && divider('connect-divider')}
-      {m.link.key &&
-        m.link.key.startsWith('cbd_') &&
+      {m.link.enabled && divider('connection-divider')}
+      {m.link.enabled &&
         section(
-          'connect',
-          'Your account',
-          row('linked-row', ICONS.link, 'Linked from the Claude app', <Text color="success">✓</Text>),
-        )}
-      {m.link.key &&
-        !m.link.key.startsWith('cbd_') &&
-        section(
-        'connect',
-        'Connect the Claude app',
-        setupShown ? (
-          <Box flexDirection="column" gap="sm">
-            {row('url-row', ICONS.link, 'Connector URL', <Button key="copy-url" variant="secondary" label="Copy" onPress={p => a.copy(m.link.url, p.surface)} />)}
-            {row('key-row', ICONS.key, 'Key', <Button key="copy-key" variant="secondary" label="Copy" onPress={p => a.copy(m.link.key, p.surface)} />)}
-            <Text size="footnote" dimColor>
-              In the Claude app: Settings, Connectors, Add custom connector with the URL, then paste the key. Another computer joins with /bridge key.
-            </Text>
-            <Box flexDirection="row">
-              <Button key="new-key" plain dimColor label="Make a new key" onPress={a.newKey} />
+          'connection',
+          'Connection',
+          owns ? (
+            <Box flexDirection="column" gap="sm">
+              {row('url-row', ICONS.link, 'Connector URL', <Button key="copy-url" variant="secondary" label="Copy" onPress={p => a.copy(m.link.url, p.surface)} />)}
+              {row('key-row', ICONS.key, 'Key', <Button key="copy-key" variant="secondary" label="Copy" onPress={p => a.copy(m.link.key, p.surface)} />)}
+              <Text size="footnote" dimColor>
+                In the Claude app: Settings, Connectors, Add custom connector with the URL, then paste the key. Other computers link to this account with a code.
+              </Text>
+              <Box flexDirection="row">
+                <Button key="new-key" plain dimColor label="Make a new key" onPress={a.newKey} />
+              </Box>
             </Box>
-          </Box>
-        ) : undefined,
-        <Button key="setup" plain dimColor label={setupShown ? 'Hide' : 'Show'} onPress={a.toggleSetup} />,
-      )}
+          ) : m.link.key ? (
+            <Box flexDirection="column" gap="sm">
+              {row('linked-row', ICONS.link, 'Linked to an account', <Text color="success">✓</Text>)}
+              <Box flexDirection="row">
+                <Button key="relink" plain dimColor label="Link again with a new code" onPress={() => a.setConnectMode('link')} />
+              </Box>
+            </Box>
+          ) : (
+            <Box flexDirection="column" gap="sm">
+              {row(
+                'code-row',
+                ICONS.key,
+                code || 'Making a code…',
+                code ? <Button key="copy-code" variant="secondary" label="Copy" onPress={p => a.copy(m.link.linkCode, p.surface)} /> : undefined,
+              )}
+              <Text size="footnote" dimColor>
+                Tell the Claude app: “link my computer, code {code || '…'}”. It connects by itself a few seconds later. On your first computer, choose Own account instead.
+              </Text>
+            </Box>
+          ),
+          Select ? (
+            <Select key="connect-mode" value={owns ? 'own' : 'link'} options={CONNECT_MODES} onSelect={v => a.setConnectMode(v === 'own' ? 'own' : 'link')} />
+          ) : (
+            <Button key="connect-mode" plain dimColor label={owns ? 'Link with a code' : 'Own account'} onPress={() => a.setConnectMode(owns ? 'link' : 'own')} />
+          ),
+        )}
 
       {divider('settings-divider')}
       {section(
@@ -310,7 +314,7 @@ export function terminalView(ui: Elements['terminal'], m: ViewModel, a: Actions)
             Link this computer: tell the Claude app “link my computer, code{' '}
             <Text bold>{m.link.linkCode ? m.link.linkCode.replace(/(.{4})(?=.)/g, '$1 ') : '…'}</Text>”.
           </Text>
-          <Button key="new-account" plain dimColor label="This is my first computer: start a new account" onPress={a.startNewAccount} />
+          <Button key="new-account" plain dimColor label="Own account here instead" onPress={() => a.setConnectMode('own')} />
         </Box>
       )}
       <Box flexDirection="row" gap={1} marginTop={1}>

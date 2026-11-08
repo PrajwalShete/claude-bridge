@@ -2,6 +2,17 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-09: one Connection switch
+
+1. **The panel's Connection section has one switch:** **Own account** (the connector URL and
+   key, which the Claude app connects with) or **Link with a code** (the 12-character code to
+   read to the Claude app). Either can be chosen at any time, so the code is never out of reach.
+2. **Nothing is lost by switching.**
+   - Leaving an owned account sets its key aside (`key.bak`) and takes a confirming second
+     press. Switching back restores that key, so the Claude app's connector still works.
+   - A linked computer can link again with a new code.
+3. **On the phone,** which draws no drop-downs, the switch is a button.
+
 ## 2026-11-09: the device agent runs inside Claude
 
 1. **No launchd agent.** A managed Mac blocked `claude-bridge-device` as a separate background

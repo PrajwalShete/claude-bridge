@@ -9,7 +9,7 @@
 
 import { atom, update } from 'claude-code'
 
-import { bridgeKey, relayUrl, savedCredential, startConnector } from './connector'
+import { KEY_PATTERN, bridgeKey, keyPath, relayUrl, savedCredential, startConnector, stopConnector } from './connector'
 import { ensureDeviceAgent } from './device'
 import { type Engine, errorText, note, rt, INITIAL_LINK } from './state'
 
@@ -79,11 +79,40 @@ export async function startLinking($: Engine): Promise<void> {
   }
 }
 
-/** The first computer of an account: its key is made here, and the Claude app is connected with it. */
+/**
+ * This computer owns an account (the Claude app connects with its URL and key). The key it had
+ * before switching to a link comes back, so the Claude app's connector keeps working; only a
+ * computer that never had one makes a new key.
+ */
 export async function startNewAccount($: Engine): Promise<void> {
   rt.linking = false
-  await bridgeKey($, true)
+  const path = await keyPath($)
+  const kept = String(await $.fs.read(`${path}.bak`).catch(() => '')).trim()
+  if (KEY_PATTERN.test(kept)) {
+    await bridgeKey($, false, kept)
+    await $.process.run(['rm', '-f', `${path}.bak`]).catch(() => undefined)
+    await note($, 'back on this computer’s own account key')
+  } else {
+    await bridgeKey($, true)
+  }
   await update($, link, s => ({ ...s, linkCode: '' }))
   await startConnector($)
   await ensureDeviceAgent($)
+}
+
+/**
+ * Switches this computer to being linked with a code (another account, or the same one again).
+ * An account key it held is set aside (`key.bak`), never deleted: switching back restores it.
+ */
+export async function switchToLinking($: Engine): Promise<void> {
+  const path = await keyPath($)
+  const held = await savedCredential($)
+  if (KEY_PATTERN.test(held)) await $.process.run(['mv', '-f', path, `${path}.bak`])
+  else if (held) await $.process.run(['rm', '-f', path])
+  await $.fs.write(await linkFile($), '{}')
+  await stopConnector($)
+  for (let i = 0; i < 30 && rt.connector; i++) await $.clock.sleep(100)
+  await update($, link, s => ({ ...s, key: '', url: '', connected: false, watched: false, paused: false, linkCode: '' }))
+  await note($, 'switched to linking with a code')
+  void startLinking($)
 }

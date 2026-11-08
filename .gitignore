@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+.dev.vars
+.DS_Store
+*.log
+# Built on each computer by the plugin
+plugin/connector/bin/
+# Written by Claude Code when it loads the plugin
+plugin/.claude-plugin/types/

@@ -1,0 +1,22 @@
+{
+  "name": "codebridge",
+  "version": "1.0.0",
+  "description": "Lets the Claude app (voice mode included) talk to your Claude Code chat: send requests, wait for replies, answer its questions.",
+  "author": { "name": "Prajwal Shete" },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "relayUrl": {
+      "type": "string",
+      "title": "Relay URL",
+      "description": "Where your Claude Bridge relay runs; the connector URL the Claude app uses is built from it",
+      "default": "https://claude-bridge.prajwalshete.com"
+    },
+    "chatUrl": {
+      "type": "string",
+      "title": "Chat connection URL",
+      "description": "Where this computer's chats connect (a WebSocket URL); empty uses the relay URL",
+      "default": "wss://cbridge.prajwalshete.com"
+    }
+  }
+}

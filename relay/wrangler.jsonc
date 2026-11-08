@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "claude-bridge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "claude-bridge.prajwalshete.com", "custom_domain": true },
+    // The address computers connect out to; a second name, so one name's DNS trouble never strands both.
+    { "pattern": "cbridge.prajwalshete.com", "custom_domain": true }
+  ],
+  "durable_objects": { "bindings": [{ "name": "HUBS", "class_name": "BridgeHub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BridgeHub"] }],
+  "vars": { "PUBLIC_ORIGIN": "https://claude-bridge.prajwalshete.com" },
+  "observability": { "enabled": true }
+}

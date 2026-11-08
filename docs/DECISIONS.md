@@ -2,6 +2,35 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-09: no helper programs where macOS refuses them
+
+1. **The problem.** A managed Mac mini refused to run `claude-bridge-device` ("access denied"),
+   even started from inside Claude: the helpers are ad-hoc signed, and that Mac's policy runs no
+   program it hasn't approved. Signing them with a Developer ID would need an Apple developer
+   account and notarizing every build, and a strict policy could still refuse them.
+2. **The fix: a mode with no helper programs.** The plugin runtime has HTTP but no sockets, so a
+   session talks to the relay by long polling: `POST /peer` is held up to 25 s until something
+   comes for the session, and what the session says goes at once in a request of its own. Waiting
+   on `$.http.fetch` costs a hook none of its 10 s budget, so the loop runs for the session's
+   life. Retries use `$.clock.after`, since a sleep would spend that budget.
+3. **The relay treats a polling session like a WebSocket one.** Both are handles (send, save,
+   close), so routing, news, watching and pausing are one piece of code. A polling session is
+   gone 60 s after its last request.
+4. **The session answers for its computer** (`serveDevice`): the device agent's jobs are ported to
+   the plugin (`computer.ts`), using only Apple's own tools and Claude Code itself. The relay asks
+   the device agent first, else the most recently seen polling session on that computer.
+5. **Questions wait at the relay.** Claude Code's questions can't wait in a hook, so they wait
+   on a mailbox in the account's hub (`POST /peer/answer`), keyed by session.
+6. **Helpers stay the default where they run**, since a WebSocket the hub can hibernate costs less
+   than a request held open, and the device agent answers with no session open. **Auto** switches
+   a computer to the no-helper mode the first time a helper won't run, for good, so the prompt
+   comes once at most:
+   - a connector that ends without a word, or doesn't start within 15 s;
+   - a device agent that doesn't stay running, twice.
+7. **The person can choose:** the panel's **Helper programs** (Auto, Use them, Inside Claude only),
+   or `CLAUDE_BRIDGE_HELPERS=off` in Claude Code's settings `env`, which wins and never launches
+   one at all (for a Mac known to refuse them).
+
 ## 2026-11-09: one Connection switch
 
 1. **The panel's Connection section has one switch:** **Own account** (the connector URL and

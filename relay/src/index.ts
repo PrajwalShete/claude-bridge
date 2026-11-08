@@ -37,6 +37,9 @@ export default {
 
       // Each computer's device agent, and each Claude Code session's connector.
       if (path === "/chat/connect") return chatConnect(req, env);
+      // A session that can't run the helper programs talks to its hub over plain HTTP instead.
+      if (path === "/peer" && req.method === "POST") return peer(req, env);
+      if (path === "/peer/answer" && req.method === "POST") return peerAnswer(req, env);
       // A new computer linking itself to an account: it offers a code, then waits for it to be approved.
       m = path.match(LINK_PATH);
       if (m) return link(req, env, m[1]);
@@ -86,6 +89,38 @@ async function status(req: Request, env: Env): Promise<Response> {
   if (!id) return json({ error: "Send the Claude Bridge key as a Bearer token." }, 401);
   const now = (await env.HUBS.get(env.HUBS.idFromName(id)).status()) as unknown as Record<string, unknown>;
   return json({ id, ...now });
+}
+
+/** The account a polling session's credential names, and a linked computer's credential hash for its hub to check. */
+async function peerAccount(req: Request): Promise<{ id: string; device: string | null } | null> {
+  const auth = req.headers.get("Authorization");
+  const bearer = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const device = bearer.match(DEVICE_CREDENTIAL);
+  if (device) return { id: device[1]!, device: await sha256Hex(device[2]!) };
+  return looksLikeKey(bearer) ? { id: await idFromKey(bearer), device: null } : null;
+}
+
+/** POST /peer: one exchange with a polling session (its hello, what it sends; held up to 25 s for what waits). */
+async function peer(req: Request, env: Env): Promise<Response> {
+  const account = await peerAccount(req);
+  if (!account) return json({ error: "Missing or malformed Claude Bridge key." }, 401);
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return json({ error: "Expected JSON." }, 400);
+  }
+  const out = await env.HUBS.get(env.HUBS.idFromName(account.id)).exchange(body as never, account.device);
+  return json(out, "error" in out ? 401 : 200);
+}
+
+/** POST /peer/answer: puts an answer to Claude Code's question (`value`), or waits up to `seconds` for one. */
+async function peerAnswer(req: Request, env: Env): Promise<Response> {
+  const account = await peerAccount(req);
+  if (!account) return json({ error: "Missing or malformed Claude Bridge key." }, 401);
+  const body = (await req.json().catch(() => ({}))) as { id?: unknown; value?: unknown; seconds?: unknown };
+  if (typeof body.id !== "string" || !body.id) return json({ error: "Name the question." }, 400);
+  return json(await env.HUBS.get(env.HUBS.idFromName(account.id)).answerBox(body.id, body.value, Number(body.seconds ?? 8), account.device));
 }
 
 /**

@@ -26,6 +26,8 @@ export type Actions = {
   setAskFirst: (on: boolean) => void
   setScreen: (on: boolean) => void
   setOpenIn: (where: 'auto' | 'desktop' | 'terminal') => void
+  /** How this computer connects: helper programs, none (from inside Claude), or Auto. */
+  setHelpers: (helpers: 'auto' | 'on' | 'off') => void
   newKey: () => void
   copy: (text: string, surface: RenderSurface) => void
   clear: () => void
@@ -49,6 +51,14 @@ const OPEN_IN = [
   { value: 'desktop', label: 'Desktop app' },
   { value: 'terminal', label: 'Terminal' },
 ]
+
+const HELPERS = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'on', label: 'Use them' },
+  { value: 'off', label: 'Inside Claude only' },
+]
+
+const helperChoice = (v: string): 'auto' | 'on' | 'off' => (v === 'on' || v === 'off' ? v : 'auto')
 
 const CONNECT_MODES = [
   { value: 'own', label: 'Own account' },
@@ -101,6 +111,7 @@ const ICONS = {
   connection: ICON('<path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/>'),
   link: ICON('<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>'),
   key: ICON('<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/>'),
+  helpers: ICON('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9l3 3-3 3M13 15h3"/>'),
 }
 const DIVIDER =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1" viewBox="0 0 1000 1" preserveAspectRatio="none"><rect width="1000" height="1" fill="rgba(128,128,128,0.28)"/></svg>'
@@ -261,6 +272,13 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions, surface?: RenderSurf
             row('screen-row', ICONS.screen, 'Screenshots', <Select key="screen" value={m.link.screen ? 'on' : 'off'} options={ON_OFF} onSelect={v => a.setScreen(v === 'on')} />)}
           {Select &&
             row('connection-row', ICONS.connection, 'Connection', <Select key="enabled" value={m.link.enabled ? 'on' : 'off'} options={ON_OFF} onSelect={v => a.setEnabled(v === 'on')} />)}
+          {Select &&
+            row('helpers-row', ICONS.helpers, 'Helper programs', <Select key="helpers" value={m.link.helpers} options={HELPERS} onSelect={v => a.setHelpers(helperChoice(v))} />)}
+          {m.link.inside && (
+            <Text size="footnote" dimColor>
+              Connected from inside Claude, with no helper programs: this computer answers the Claude app while a Claude Code session is open on it.
+            </Text>
+          )}
         </Box> : undefined,
         <Button key="settings-toggle" plain dimColor label={m.settingsShown ? 'Hide' : 'Show'} onPress={a.toggleSettings} />,
       )}
@@ -354,6 +372,8 @@ export function terminalView(ui: Elements['terminal'], m: ViewModel, a: Actions)
         <Select key="open-in" label="Sessions open in " value={m.link.openIn} options={OPEN_IN} onSelect={v => a.setOpenIn(v === 'desktop' || v === 'terminal' ? v : 'auto')} />
         <Select key="screen" label="Screenshots " value={m.link.screen ? 'on' : 'off'} options={ON_OFF} onSelect={v => a.setScreen(v === 'on')} />
         <Select key="enabled" label="Connection " value={m.link.enabled ? 'on' : 'off'} options={ON_OFF} onSelect={v => a.setEnabled(v === 'on')} />
+        <Select key="helpers" label="Helper programs " value={m.link.helpers} options={HELPERS} onSelect={v => a.setHelpers(helperChoice(v))} />
+        {m.link.inside && <Text dimColor>Connected from inside Claude (no helper programs)</Text>}
       </Box>
       {messages.length > 0 && (
         <Box flexDirection="column" marginTop={1}>

@@ -6,6 +6,7 @@ import type { EngineInterface, Timer } from 'claude-code'
 
 import type { ClaudeActivity, LinkState, LogEntry, MessageStatus, PendingQuestion } from '../types'
 import type { Picture } from './images'
+import type { InsideLink } from './inside'
 
 export type Engine = EngineInterface
 
@@ -13,7 +14,7 @@ export const PANE = 'claude-bridge'
 
 // Every file that reads or writes a value declares its own atom for it (the validator checks
 // each `$.state` key where it is used); the starting values they share live here.
-export const INITIAL_LINK: LinkState = { enabled: true, connected: false, watched: false, paused: false, url: '', key: '', askFirst: false, screen: true, openIn: 'auto', linkCode: '' }
+export const INITIAL_LINK: LinkState = { enabled: true, connected: false, watched: false, paused: false, url: '', key: '', askFirst: false, screen: true, openIn: 'auto', linkCode: '', helpers: 'auto', inside: false }
 export const INITIAL_CLAUDE: ClaudeActivity = { isWorking: false, tools: [], replies: [] }
 export const INITIAL_LOG: LogEntry[] = []
 export const NO_QUESTION = null as PendingQuestion | null
@@ -29,6 +30,13 @@ export const rt = {
   connector: undefined as Process | undefined,
   connectorStarting: false,
   connectorStopping: false,
+  /** The running connector said it started (so helper programs run on this computer). */
+  connectorRan: false,
+  /** The no-helper mode's link to the relay (inside.ts), when this session runs that way. */
+  inside: undefined as InsideLink | undefined,
+  insideTimer: undefined as Timer | undefined,
+  /** The desktop app's session records, read at most every 10 s (computer.ts). */
+  desktopCache: undefined as { at: number; rows: unknown[] } | undefined,
   /** Ids of the app's messages whose prompt entered before its turn.start ran (see MARK below). */
   entering: [] as string[],
   /** The ids of the app's messages the running turn carries; queued ones can arrive together. */
@@ -63,6 +71,8 @@ export const rt = {
   deviceId: '' as string,
   /** The device agent was checked (installed, current, running) since this load. */
   deviceAgentChecked: false,
+  /** Starts of the device agent in a row that it didn't survive (refused by macOS, say). */
+  agentRefused: 0,
   /** Checks every 30 s that the device agent still runs. */
   agentTimer: undefined as Timer | undefined,
   /** When Make a new key was first pressed, for its confirming second press. */
@@ -73,6 +83,11 @@ export const rt = {
   askFirst: false,
   /** Waiting for this computer to be linked from the Claude app (link.ts). */
   linking: false,
+}
+
+/** Whether this session has a link to the relay: the connector's, or its own (no-helper mode). */
+export function bridgeUp(): boolean {
+  return !!rt.connector || !!rt.inside
 }
 
 // MARK: Message ids

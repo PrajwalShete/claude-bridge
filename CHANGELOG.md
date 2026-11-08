@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.0 (2026-11-09)
+
+- **Works on Macs that block the helper programs.** Where macOS refuses to run the plugin's two
+  small programs (a managed Mac's "access denied"), each session talks to the relay itself, from
+  inside Claude Code, and answers for its computer too: no program to run, nothing to allow.
+  - **Auto** (the default) uses the helpers where they run, and switches to this mode for good the
+    first time a computer refuses one. The panel's **Helper programs** setting chooses either
+    way; `CLAUDE_BRIDGE_HELPERS=off` in Claude Code's settings `env` never launches one at all.
+  - Without the helpers, the computer answers the Claude app while a Claude Code session is open
+    on it (the device agent also answered with none open).
+- The device agent starts only once the connector has started, and stops being retried where
+  it doesn't stay running, so a refused program no longer brings the macOS prompt back every 30 s.
+
 ## 1.3.0 (2026-11-09)
 
 - **One Connection switch in the panel:** Own account (URL and key for the Claude app) or Link

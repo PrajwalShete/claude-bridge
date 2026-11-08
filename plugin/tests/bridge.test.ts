@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { exchangesOf, filesTouched } from '../hooks/catchup'
 import { changesOf } from '../hooks/claude'
+import { toolResult } from '../hooks/inside'
 import { cleanPrompt, isPersonPrompt } from '../hooks/state'
 import { FOOTER, PANE } from './fixtures'
 
@@ -18,7 +19,7 @@ test('a computer not linked yet shows how to link it, on every surface', async (
 /** A computer that holds the account's key, as the first computer does. */
 const LINKED = {
   enabled: true, connected: false, watched: false, paused: false, url: 'https://relay.example/0123456789abcdef0123/mcp',
-  key: 'cbrg_' + 'a'.repeat(43), askFirst: false, screen: true, openIn: 'auto', linkCode: '',
+  key: 'cbrg_' + 'a'.repeat(43), askFirst: false, screen: true, openIn: 'auto', linkCode: '', helpers: 'auto', inside: false,
 }
 
 test('with the account key, the connect steps show; Settings opens on a press', async ($, on) => {
@@ -150,5 +151,25 @@ test('the footer carries one small Bridge button that opens the panel, keeping t
   const ui = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
   expect(await ui.find({ key: 'bridge-open' })).toBeDefined()
   expect(await ui.find({ text: /focus/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('without helper programs, answers are built as the connector builds them', () => {
+  const shot = toolResult({ status: 'shown', _images: [{ data: 'abc', mimeType: 'image/jpeg' }] })
+  expect(shot).toEqual({ content: [{ type: 'text', text: '{"status":"shown"}' }, { type: 'image', data: 'abc', mimeType: 'image/jpeg' }], isError: false })
+  expect(toolResult({ error: 'no' }).isError).toBe(true)
+  expect(toolResult({ error: 'no', status: 'partial' }).isError).toBe(false)
+  const big = toolResult({ status: 'shown', _images: [{ data: 'x'.repeat(970_000), mimeType: 'image/png' }] }) as { content: Array<{ type: string; text?: string }> }
+  expect(big.content.length).toBe(1)
+  expect(big.content[0]!.text).toContain('too large')
+})
+
+test('the Helper programs setting shows in Settings, with a note when connected from inside Claude', async ($, on) => {
+  mock.clock(on)
+  on('state.get', ($, e, next) => (e.key === 'link' ? { value: { value: { ...LINKED, inside: true, helpers: 'off' }, version: 1 } } : next(e)))
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'settings-toggle' })
+  expect(await ui.find({ key: 'helpers' })).toBeDefined()
+  expect(await ui.find({ text: /Connected from inside Claude/ })).toBeDefined()
   await ui.unmount()
 })

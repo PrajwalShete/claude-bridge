@@ -44,6 +44,28 @@ them).
 | `stopped`, `failed` | `task`. |
 | `answer` | `ask`: the side question's id; `question`; `text`: the answer. |
 
+## Session ⇄ relay without helper programs (HTTP)
+
+A session that can't run the connector speaks the same messages over HTTP, with the same
+`Authorization: Bearer <key or credential>`.
+
+| Request | Body | Answer |
+| --- | --- | --- |
+| `POST /peer` | `{ hello, messages, wait }` | `{ messages }`: what came for the session. |
+| `POST /peer/answer` | `{ id, value }` | `{}`: puts an answer to a question. |
+| `POST /peer/answer` | `{ id, seconds }` | Waits up to 25 s: `{ value }` or `{ pending: true }`. |
+
+- **`/peer` fields:**
+  - `hello` is the session's hello, sent with every request, so a relay that restarted knows the
+    session again (it answers `welcome` anew). It adds `serveDevice: true` and `name` (the
+    computer's name): the session then answers the device agent's calls for its computer.
+  - `messages` are the session's messages (`state`, `event`, `watch`, `pause`, `result`).
+  - `wait` (seconds, at most 25) holds the request until something comes. The session keeps one
+    such request waiting at all times, and sends with `wait: 0`.
+- **The relay forgets a polling session** 60 s after its last request.
+- **The `id` of `/peer/answer`** is the session's id and the question's id (`<session>:<question>`):
+  the mailbox is shared by the whole account.
+
 ## Device agent ⇄ relay (WebSocket)
 
 Same endpoint and key. Settings come from `~/.config/claude-bridge/`: `key`, `device.json`

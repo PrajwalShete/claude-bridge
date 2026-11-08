@@ -13,4 +13,7 @@ sessions, on every computer linked to your account.
   Its panel shows a code; tell the Claude app "link my computer, code …".
 
 The plugin carries its two small helper programs prebuilt (Apple silicon and Intel), so no Xcode
-is needed. Pause everything at any time from the panel.
+is needed. On a Mac that refuses to run them (a managed Mac's "access denied"), it connects from
+inside Claude Code instead, by itself; to never launch them there, choose **Inside Claude only**
+under Settings, **Helper programs**, or set `CLAUDE_BRIDGE_HELPERS=off` in Claude Code's settings
+`env`. Pause everything at any time from the panel.

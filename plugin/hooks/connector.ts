@@ -5,7 +5,8 @@
 import { atom, read, update } from 'claude-code'
 
 import { type Engine, type Process, cleanPrompt, errorText, isPersonPrompt, note, rt, INITIAL_LINK, INITIAL_CLAUDE } from './state'
-import { deviceId } from './device'
+import { computerSetting, deviceId, ensureDeviceAgent, setComputerSetting } from './device'
+import { insideRoute, startInside, stopInside } from './inside'
 import { startLinking } from './link'
 import { answerTool } from './tools'
 
@@ -159,14 +160,45 @@ export async function postTo($: Engine, socketPath: string, route: string, body:
   return response.ok ? JSON.parse(response.text) : undefined
 }
 
-/** A command to this session's connector; nothing while it isn't running. */
+/** A command to this session's connector (or, in the no-helper mode, its own link); nothing while neither runs. */
 export async function post($: Engine, route: string, body: unknown): Promise<unknown> {
+  if (rt.inside) return insideRoute($, route, (body ?? {}) as Record<string, unknown>)
   return rt.connector ? postTo($, rt.connector.socketPath, route, body) : undefined
+}
+
+/**
+ * How this computer connects: through the plugin's helper programs (the connector and the device
+ * agent), or from inside Claude with none (inside.ts). The panel's "Helper programs" setting:
+ * `auto` (the default) uses them unless this computer was found to block them, `on` always,
+ * `off` never.
+ */
+export type HelperSetting = 'auto' | 'on' | 'off'
+
+export async function helperSetting($: Engine): Promise<HelperSetting> {
+  // CLAUDE_BRIDGE_HELPERS (settings.json `env`) wins: `off` there means no helper program is ever launched.
+  const forced = await $.env.get('CLAUDE_BRIDGE_HELPERS').catch(() => undefined)
+  if (forced === 'on' || forced === 'off' || forced === 'auto') return forced
+  const value = await computerSetting($, 'helpers')
+  return value === 'on' || value === 'off' ? value : 'auto'
+}
+
+export async function usesHelpers($: Engine): Promise<boolean> {
+  const setting = await helperSetting($)
+  if (setting !== 'auto') return setting === 'on'
+  return (await computerSetting($, 'helpersBlocked')) !== true
+}
+
+/** This computer wouldn't run a helper program: from now on it connects from inside Claude (on Auto). */
+export async function helpersBlocked($: Engine, why: string): Promise<boolean> {
+  if ((await helperSetting($)) !== 'auto') return false
+  await setComputerSetting($, 'helpersBlocked', true)
+  await note($, `helper programs blocked here (${why}); connecting from inside Claude from now on`)
+  return true
 }
 
 /** Starts the connector, which keeps this session connected to the relay. */
 export async function startConnector($: Engine): Promise<void> {
-  if (rt.connector || rt.connectorStarting) return
+  if (rt.connector || rt.inside || rt.connectorStarting) return
   rt.connectorStarting = true
   rt.connectorStopping = false
   try {
@@ -179,18 +211,43 @@ export async function startConnector($: Engine): Promise<void> {
     }
     const url = await connectorUrl(key)
     await update($, link, s => ({ ...s, enabled: true, connected: false, watched: false, url, key }))
-    const binary = (await ensureBinary($, 'connector')).path
     const session = await $.session.id()
-    const socketPath = `/tmp/claude-bridge-${session.slice(0, 8)}.sock`
     const folder = await $.session.root()
     const project = folder.split('/').filter(Boolean).pop() ?? 'project'
-    const stream = $.process.spawn({
-      argv: [binary],
-      input: JSON.stringify({ relay: chatUrl(), key, session, project, folder, socketPath, device: await deviceId($) }),
-    })
+    const device = await deviceId($)
+    const inside = () => startInside($, { relay: chatBase().replace(/^ws/, 'http'), key, session, project, folder, device })
+    if (!(await usesHelpers($))) return await inside()
+    let binary: string
+    try {
+      binary = (await ensureBinary($, 'connector')).path
+    } catch (error) {
+      // No program to run (a copy with no prebuilt one, and no Xcode): the no-helper mode stands in.
+      await note($, `no connector program: ${errorText(error)}`)
+      return await inside()
+    }
+    const socketPath = `/tmp/claude-bridge-${session.slice(0, 8)}.sock`
+    let stream: Process['stream']
+    try {
+      stream = $.process.spawn({
+        argv: [binary],
+        input: JSON.stringify({ relay: chatUrl(), key, session, project, folder, socketPath, device }),
+      })
+    } catch (error) {
+      if (await helpersBlocked($, errorText(error))) return await inside()
+      throw error
+    }
     rt.connector = { stream, socketPath }
+    rt.connectorRan = false
     await note($, 'connector started')
     void pump($, stream)
+    // A program held at a macOS prompt never starts: after 15 s, connect without it.
+    $.clock.after(15_000, async () => {
+      if (rt.connector?.stream !== stream || rt.connectorRan) return
+      if (!(await helpersBlocked($, 'the connector didn’t start within 15 s'))) return
+      rt.connector = undefined
+      void stream.return?.(undefined as never)
+      void startConnector($)
+    })
   } catch (error) {
     await note($, `connector failed to start: ${errorText(error)}`)
   } finally {
@@ -201,6 +258,7 @@ export async function startConnector($: Engine): Promise<void> {
 export async function stopConnector($: Engine): Promise<void> {
   const running = rt.connector
   rt.connectorStopping = true
+  if (rt.inside) await stopInside($)
   if (!running) return
   await postTo($, running.socketPath, '/stop', {}).catch(() => undefined)
   $.clock.after(1500, () => {
@@ -210,9 +268,12 @@ export async function stopConnector($: Engine): Promise<void> {
 
 async function pump($: Engine, stream: Process['stream']): Promise<void> {
   let buffer = ''
+  // Whether the program ran at all: one that macOS refuses to run ends without a word.
+  let spoke = false
   try {
     for await (const piece of stream) {
       if (piece.stream === 'stderr') continue
+      if (piece.text.trim()) spoke = true
       buffer += piece.text
       for (let at = buffer.indexOf('\n'); at >= 0; at = buffer.indexOf('\n')) {
         const line = buffer.slice(0, at).trim()
@@ -224,7 +285,11 @@ async function pump($: Engine, stream: Process['stream']): Promise<void> {
         } catch {
           continue
         }
-        if (event.t === 'link') {
+        if (event.t === 'started') {
+          rt.connectorRan = true
+          // The connector runs, so helper programs run here: the device agent can too.
+          void ensureDeviceAgent($)
+        } else if (event.t === 'link') {
           const wasConnected = (await read($, link)).connected
           await update($, link, s => ({ ...s, connected: event.state === 'connected', watched: event.watched, paused: event.paused === true }))
           if (event.state === 'connected' && !wasConnected) void reportState($)
@@ -243,8 +308,13 @@ async function pump($: Engine, stream: Process['stream']): Promise<void> {
   await update($, link, s => ({ ...s, connected: false, watched: false }))
   // A crash or a lost worker should not leave the Claude app talking to no one.
   if (!rt.connectorStopping && (await read($, link)).enabled) {
+    if (!spoke && (await helpersBlocked($, 'the connector ended without starting'))) {
+      void startConnector($)
+      return
+    }
     await note($, 'connector ended; restarting it')
-    $.clock.after(3000, () => void startConnector($))
+    // One that never started waits longer, so a refused program isn't retried every few seconds.
+    $.clock.after(spoke ? 3000 : 60_000, () => void startConnector($))
   }
 }
 

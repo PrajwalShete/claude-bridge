@@ -6,7 +6,7 @@
 import { atom, read, update } from 'claude-code'
 
 import { post } from './connector'
-import { type Engine, PANE, addLog, errorText, note, rt, short, NO_QUESTION } from './state'
+import { type Engine, PANE, addLog, bridgeUp, errorText, note, rt, short, NO_QUESTION } from './state'
 import type { BridgeQuestion, PendingQuestion } from '../types'
 
 const question = atom({ plugin: 'codebridge', key: 'question' } as const, NO_QUESTION)
@@ -54,7 +54,7 @@ export async function askThroughApp(
   let value: Answer | undefined
   let misses = 0
   const askedAt = await $.clock.now()
-  while (rt.connector && misses < 3 && (await $.clock.now()) - askedAt < ANSWER_WINDOW_MS) {
+  while (bridgeUp() && misses < 3 && (await $.clock.now()) - askedAt < ANSWER_WINDOW_MS) {
     try {
       const reply = (await post($, '/wait_answer', { id, seconds: 8 })) as { pending?: boolean; value?: Answer } | undefined
       if (!reply) {

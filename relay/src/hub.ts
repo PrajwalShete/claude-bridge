@@ -38,6 +38,8 @@ type Peer = {
   task?: string;
   /** A desktop side chat ("btw"): a fork of another session, which names reach only by id. */
   side?: boolean;
+  /** A polling session that also answers for its computer (no device agent can run there). */
+  serveDevice?: boolean;
   /** Questions to `ask` the session is still answering with tools. */
   asking?: number;
   /** A side chat the Claude app forked: the session it came from. */
@@ -54,6 +56,22 @@ type Peer = {
 };
 
 type SessionPeer = Peer & { role: "session"; session: string; project: string; folder: string };
+
+/**
+ * A peer however it is connected: a WebSocket (the session connector, the device agent), or a
+ * session that polls over plain HTTP (where a computer can't run the helper programs).
+ */
+type Handle = {
+  meta: Peer;
+  /** The WebSocket, or the polling peer's record: what makes two handles the same peer. */
+  id: object;
+  send: (message: string) => void;
+  save: (meta: Peer) => void;
+  close: (code: number, reason: string) => void;
+};
+
+/** A session that polls: what it is, when it was last heard, and what waits for its next poll. */
+type HttpPeer = { meta: Peer; lastSeen: number; outbox: string[]; wake: Set<() => void> };
 type DevicePeer = Peer & { role: "device" };
 
 export type EventKind = "started" | "finished" | "question" | "stopped" | "failed" | "answer";
@@ -110,6 +128,9 @@ const HISTORY_TTL_MS = 60 * 60_000;
 const OPEN_WAIT_MS = 60_000;
 const NAMES_TTL_MS = 20_000;
 const HISTORY_LIMIT = 15;
+/** How long a polling peer's request is held for a message, and when it counts as gone. */
+const POLL_HOLD_MS = 25_000;
+const POLL_STALE_MS = 60_000;
 /** How long a new computer's link code stays good. */
 const LINK_TTL_MS = 10 * 60_000;
 const LINK_WAIT_MS = 25_000;
@@ -150,6 +171,11 @@ export class BridgeHub extends DurableObject<Env> {
   private arrivals = new Map<string, Array<() => void>>();
   /** What live sessions are called, as their device said lately. */
   private names = new Map<string, { name: string; at: number }>();
+  /** Sessions that poll over HTTP, by session id (in memory: each poll says hello again). */
+  private polling = new Map<string, HttpPeer>();
+  /** Answers to Claude Code's questions, for polling sessions to collect, and who waits on them. */
+  private answers = new Map<string, unknown>();
+  private answerWaiters = new Map<string, Set<() => void>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -172,22 +198,59 @@ export class BridgeHub extends DurableObject<Env> {
 
   // MARK: Peers
 
-  private peers(): Array<{ ws: WebSocket; meta: Peer }> {
-    const now = Date.now();
-    const out: Array<{ ws: WebSocket; meta: Peer }> = [];
-    for (const ws of this.ctx.getWebSockets()) {
-      const meta = ws.deserializeAttachment() as Peer | null;
-      if (!meta?.ready) continue;
-      const lastPing = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? meta.connectedAt;
-      if (now - Math.max(lastPing, meta.connectedAt) > STALE_AFTER_MS) {
+  private wsHandle(ws: WebSocket): Handle {
+    return {
+      meta: (ws.deserializeAttachment() as Peer | null) ?? { ready: false, connectedAt: Date.now(), device: "" },
+      id: ws,
+      send: (message) => ws.send(message),
+      save: (meta) => ws.serializeAttachment(meta),
+      close: (code, reason) => {
         try {
-          ws.close(1001, "No heartbeat");
+          ws.close(code, reason);
         } catch {
           // already closed
         }
+      },
+    };
+  }
+
+  private httpHandle(key: string, peer: HttpPeer): Handle {
+    return {
+      meta: peer.meta,
+      id: peer,
+      send: (message) => {
+        peer.outbox.push(message);
+        for (const wake of [...peer.wake]) wake();
+      },
+      save: (meta) => {
+        peer.meta = meta;
+      },
+      close: () => {
+        if (this.polling.get(key) === peer) this.polling.delete(key);
+        for (const wake of [...peer.wake]) wake();
+      },
+    };
+  }
+
+  private peers(): Handle[] {
+    const now = Date.now();
+    const out: Handle[] = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      const handle = this.wsHandle(ws);
+      if (!handle.meta.ready) continue;
+      const lastPing = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? handle.meta.connectedAt;
+      if (now - Math.max(lastPing, handle.meta.connectedAt) > STALE_AFTER_MS) {
+        handle.close(1001, "No heartbeat");
         continue;
       }
-      out.push({ ws, meta });
+      out.push(handle);
+    }
+    for (const [key, peer] of this.polling) {
+      if (now - peer.lastSeen > POLL_STALE_MS) {
+        this.polling.delete(key);
+        continue;
+      }
+      if (peer.meta.ready) out.push(this.httpHandle(key, peer));
     }
     return out;
   }
@@ -199,16 +262,27 @@ export class BridgeHub extends DurableObject<Env> {
       .sort((a, b) => (b.lastActive ?? b.connectedAt) - (a.lastActive ?? a.connectedAt));
   }
 
-  private devicePeers(): Array<{ ws: WebSocket; meta: DevicePeer }> {
-    return this.peers().filter((p): p is { ws: WebSocket; meta: DevicePeer } => p.meta.role === "device");
+  private devicePeers(): Handle[] {
+    return this.peers().filter((p) => p.meta.role === "device");
   }
 
-  private sessionSocket(id: string): WebSocket | null {
-    return this.peers().find((p) => p.meta.role === "session" && p.meta.session === id)?.ws ?? null;
+  private sessionSocket(id: string): Handle | null {
+    return this.peers().find((p) => p.meta.role === "session" && p.meta.session === id) ?? null;
   }
 
-  private deviceSocket(id: string): WebSocket | null {
-    return this.devicePeers().find((p) => p.meta.device === id)?.ws ?? null;
+  /** Who answers for a computer: its device agent, else a polling session of it that serves it. */
+  private deviceSocket(id: string): Handle | null {
+    const agent = this.devicePeers().find((p) => p.meta.device === id);
+    if (agent) return agent;
+    let best: Handle | null = null;
+    let seen = 0;
+    for (const [key, peer] of this.polling) {
+      if (peer.meta.ready && peer.meta.serveDevice && peer.meta.device === id && peer.lastSeen >= seen) {
+        best = this.httpHandle(key, peer);
+        seen = peer.lastSeen;
+      }
+    }
+    return best;
   }
 
   // MARK: Devices
@@ -217,7 +291,10 @@ export class BridgeHub extends DurableObject<Env> {
   private async devices(): Promise<Array<{ id: string; name: string; online: boolean }>> {
     const named = (await this.ctx.storage.get<Record<string, string>>("deviceNames")) ?? {};
     const known = (await this.ctx.storage.get<Record<string, string>>("deviceDefaults")) ?? {};
-    const online = new Set(this.devicePeers().map((p) => p.meta.device));
+    const online = new Set([
+      ...this.devicePeers().map((p) => p.meta.device),
+      ...[...this.polling.values()].filter((p) => p.meta.ready && p.meta.serveDevice).map((p) => p.meta.device),
+    ]);
     const withSessions = new Set(this.sessions().map((s) => s.device).filter(Boolean));
     const ids = new Set([...Object.keys(known), ...online, ...withSessions]);
     return [...ids].map((id) => ({ id, name: named[id] ?? known[id] ?? "a computer", online: online.has(id) }));
@@ -361,10 +438,10 @@ export class BridgeHub extends DurableObject<Env> {
    */
   private async setPaused(paused: boolean): Promise<void> {
     await this.ctx.storage.put("paused", paused);
-    for (const { ws, meta } of this.peers()) {
-      if (meta.role !== "session") continue;
+    for (const peer of this.peers()) {
+      if (peer.meta.role !== "session") continue;
       try {
-        ws.send(JSON.stringify({ type: "paused", paused }));
+        peer.send(JSON.stringify({ type: "paused", paused }));
       } catch {
         // closing
       }
@@ -393,10 +470,10 @@ export class BridgeHub extends DurableObject<Env> {
     for (const id of after) nextFrom[id] = before.has(id) ? (from[id] ?? 0) : seq;
     await this.ctx.storage.put({ watch: [...after], watchFrom: nextFrom });
     // Tell each session whose state changed, so its panel and its question handling follow.
-    for (const { ws, meta } of this.peers()) {
-      if (meta.role !== "session" || before.has(meta.session!) === after.has(meta.session!)) continue;
+    for (const peer of this.peers()) {
+      if (peer.meta.role !== "session" || before.has(peer.meta.session!) === after.has(peer.meta.session!)) continue;
       try {
-        ws.send(JSON.stringify({ type: "watched", watched: after.has(meta.session!) }));
+        peer.send(JSON.stringify({ type: "watched", watched: after.has(peer.meta.session!) }));
       } catch {
         // closing
       }
@@ -412,10 +489,14 @@ export class BridgeHub extends DurableObject<Env> {
     } catch {
       return;
     }
-    const meta = ws.deserializeAttachment() as Peer;
+    await this.handleMessage(this.wsHandle(ws), msg);
+  }
 
+  /** One message from a peer, however it is connected. */
+  private async handleMessage(peer: Handle, msg: { type?: string; [k: string]: unknown }): Promise<void> {
+    const meta = peer.meta;
     if (msg.type === "hello") {
-      await this.hello(ws, meta, msg);
+      await this.hello(peer, meta, msg);
       return;
     }
     if (!meta.ready) return;
@@ -429,15 +510,15 @@ export class BridgeHub extends DurableObject<Env> {
       return;
     }
     if (msg.type === "ping") {
-      ws.send('{"type":"pong"}');
+      peer.send('{"type":"pong"}');
       return;
     }
     if (meta.role !== "session") return;
 
     if (msg.type === "event") {
-      await this.record(ws, meta as SessionPeer, msg);
+      await this.record(peer, meta as SessionPeer, msg);
     } else if (msg.type === "state") {
-      ws.serializeAttachment({
+      peer.save({
         ...meta,
         working: msg.working === true,
         task: typeof msg.task === "string" ? msg.task.slice(0, 200) : meta.task,
@@ -457,30 +538,30 @@ export class BridgeHub extends DurableObject<Env> {
     }
   }
 
-  private async hello(ws: WebSocket, meta: Peer, msg: Record<string, unknown>): Promise<void> {
+  private async hello(peer: Handle, meta: Peer, msg: Record<string, unknown>): Promise<void> {
     const device = String(msg.device ?? "").slice(0, 64);
     if (msg.protocol !== PROTOCOL || !device) {
-      ws.send(JSON.stringify({ type: "error", message: "This plugin version doesn't match the relay. Update the codebridge plugin." }));
-      ws.close(CLOSE_BAD_HELLO, "Unsupported protocol");
+      peer.send(JSON.stringify({ type: "error", message: "This plugin version doesn't match the relay. Update the codebridge plugin." }));
+      peer.close(CLOSE_BAD_HELLO, "Unsupported protocol");
       return;
     }
     if (msg.role === "device") {
-      for (const p of this.devicePeers()) if (p.ws !== ws && p.meta.device === device) p.ws.close(CLOSE_REPLACED, "Reconnected");
-      const defaultName = String(msg.name ?? "").slice(0, 80) || "Mac";
-      const known = (await this.ctx.storage.get<Record<string, string>>("deviceDefaults")) ?? {};
-      if (known[device] !== defaultName) await this.ctx.storage.put("deviceDefaults", { ...known, [device]: defaultName });
-      ws.serializeAttachment({ ...meta, role: "device", ready: true, device, defaultName, lastActive: Date.now() } satisfies Peer);
-      ws.send(JSON.stringify({ type: "welcome", name: await this.deviceName(device) }));
+      for (const p of this.devicePeers()) if (p.id !== peer.id && p.meta.device === device) p.close(CLOSE_REPLACED, "Reconnected");
+      await this.knowDevice(device, msg.name);
+      peer.save({ ...meta, role: "device", ready: true, device, defaultName: String(msg.name ?? "").slice(0, 80) || "Mac", lastActive: Date.now() } satisfies Peer);
+      peer.send(JSON.stringify({ type: "welcome", name: await this.deviceName(device) }));
       return;
     }
     const session = String(msg.session ?? "").slice(0, 64);
     if (!session) {
-      ws.close(CLOSE_BAD_HELLO, "No session");
+      peer.close(CLOSE_BAD_HELLO, "No session");
       return;
     }
-    // One socket per session: a reconnecting connector replaces its old socket.
-    for (const p of this.peers()) if (p.ws !== ws && p.meta.role === "session" && p.meta.session === session) p.ws.close(CLOSE_REPLACED, "Reconnected");
-    ws.serializeAttachment({
+    // One connection per session: a reconnecting one replaces the old one, however connected.
+    for (const p of this.peers()) if (p.id !== peer.id && p.meta.role === "session" && p.meta.session === session) p.close(CLOSE_REPLACED, "Reconnected");
+    const serveDevice = msg.serveDevice === true;
+    if (serveDevice) await this.knowDevice(device, msg.name);
+    peer.save({
       ...meta,
       role: "session",
       ready: true,
@@ -489,10 +570,96 @@ export class BridgeHub extends DurableObject<Env> {
       project: String(msg.project ?? "").slice(0, 80),
       folder: String(msg.folder ?? "").slice(0, 400),
       lastActive: Date.now(),
+      ...(serveDevice ? { serveDevice: true } : {}),
     } satisfies Peer);
-    ws.send(JSON.stringify({ type: "welcome", watched: (await this.watchList()).includes(session), paused: await this.isPaused() }));
+    peer.send(JSON.stringify({ type: "welcome", watched: (await this.watchList()).includes(session), paused: await this.isPaused() }));
     for (const arrived of this.arrivals.get(session) ?? []) arrived();
     this.arrivals.delete(session);
+  }
+
+  /** Keeps a computer's own name (its ComputerName) for when no one has named it. */
+  private async knowDevice(device: string, name: unknown): Promise<void> {
+    const defaultName = String(name ?? "").slice(0, 80) || "Mac";
+    const known = (await this.ctx.storage.get<Record<string, string>>("deviceDefaults")) ?? {};
+    if (known[device] !== defaultName) await this.ctx.storage.put("deviceDefaults", { ...known, [device]: defaultName });
+  }
+
+  // MARK: Polling sessions
+  //
+  // Where a computer can't run the helper programs, its sessions talk to the hub over plain HTTP:
+  // each request says hello, carries what the session sends, and is held until something is
+  // waiting for it (or 25 s pass); what was waiting comes back in the answer.
+
+  /** One exchange with a polling session. `device` is a linked computer's credential hash, checked here. */
+  async exchange(body: { hello?: Record<string, unknown>; messages?: unknown[]; wait?: number }, device: string | null): Promise<{ messages: unknown[] } | { error: string }> {
+    if (device) {
+      const linked = (await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {};
+      if (!linked[device]) return { error: "This computer's link to Claude Bridge was removed. Link it again." };
+    }
+    const hello = body.hello ?? {};
+    const key = String(hello.session ?? "").slice(0, 64);
+    if (!key) return { error: "A polling peer names its session." };
+    let peer = this.polling.get(key);
+    if (!peer || !peer.meta.ready) {
+      peer = { meta: { ready: false, connectedAt: Date.now(), device: "" }, lastSeen: Date.now(), outbox: [], wake: new Set() };
+      this.polling.set(key, peer);
+      await this.hello(this.httpHandle(key, peer), peer.meta, { ...hello, type: "hello" });
+      if (!peer.meta.ready) return { messages: peer.outbox.splice(0).map((m) => JSON.parse(m)) };
+    }
+    peer.lastSeen = Date.now();
+    const handle = this.httpHandle(key, peer);
+    for (const message of Array.isArray(body.messages) ? body.messages.slice(0, 200) : []) {
+      if (message && typeof message === "object") await this.handleMessage(handle, message as { type?: string });
+    }
+    const wait = Math.min(POLL_HOLD_MS, Math.max(0, Number(body.wait ?? 0) * 1000));
+    if (peer.outbox.length === 0 && wait > 0) {
+      const current = peer;
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          current.wake.delete(done);
+          resolve();
+        };
+        const timer = setTimeout(done, wait);
+        current.wake.add(done);
+      });
+    }
+    peer.lastSeen = Date.now();
+    return { messages: peer.outbox.splice(0).map((m) => JSON.parse(m)) };
+  }
+
+  /**
+   * The mailbox Claude Code's questions wait on for a polling session (a hook can't wait in the
+   * plugin itself): `value` puts an answer, else this waits up to `seconds` for one.
+   */
+  async answerBox(id: string, value: unknown, seconds: number, device: string | null): Promise<{ value?: unknown; pending?: true; error?: string }> {
+    if (device) {
+      const linked = (await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {};
+      if (!linked[device]) return { error: "This computer's link to Claude Bridge was removed. Link it again." };
+    }
+    const key = id.slice(0, 200);
+    if (value !== undefined) {
+      this.answers.set(key, value);
+      for (const wake of [...(this.answerWaiters.get(key) ?? [])]) wake();
+      return {};
+    }
+    if (!this.answers.has(key)) {
+      await new Promise<void>((resolve) => {
+        const set = this.answerWaiters.get(key) ?? new Set<() => void>();
+        const done = () => {
+          clearTimeout(timer);
+          set.delete(done);
+          resolve();
+        };
+        const timer = setTimeout(done, Math.min(25_000, Math.max(1_000, seconds * 1000)));
+        set.add(done);
+        this.answerWaiters.set(key, set);
+      });
+    }
+    if (!this.answers.has(key)) return { pending: true };
+    const answer = this.answers.get(key);
+    this.answers.delete(key);
+    return { value: answer };
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
@@ -655,7 +822,7 @@ export class BridgeHub extends DurableObject<Env> {
   // MARK: Calls
 
   /** Sends a request to a peer and waits for its answer. */
-  private request(ws: WebSocket, message: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+  private request(peer: Handle, message: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     let id: number;
     do id = Math.floor(Math.random() * 2 ** 48);
     while (this.pending.has(id));
@@ -666,7 +833,7 @@ export class BridgeHub extends DurableObject<Env> {
       }, timeoutMs);
       this.pending.set(id, { resolve, timer });
       try {
-        ws.send(JSON.stringify({ ...message, id }));
+        peer.send(JSON.stringify({ ...message, id }));
       } catch {
         clearTimeout(timer);
         this.pending.delete(id);
@@ -1062,7 +1229,7 @@ export class BridgeHub extends DurableObject<Env> {
   // MARK: The feed
 
   /** A session's event: its state for list_sessions, and the feed for the Claude app. */
-  private async record(ws: WebSocket, meta: SessionPeer, msg: Record<string, unknown>): Promise<void> {
+  private async record(peer: Handle, meta: SessionPeer, msg: Record<string, unknown>): Promise<void> {
     const kind = msg.kind as EventKind;
     if (!EVENT_KINDS.includes(kind)) return;
     // While paused nothing is passed on, so nothing is kept to pass on later either.
@@ -1071,7 +1238,7 @@ export class BridgeHub extends DurableObject<Env> {
     const text = str(msg.text, 4000);
     // An answer to `ask` says nothing about the session's own turn.
     if (kind !== "answer") {
-      ws.serializeAttachment({
+      peer.save({
         ...meta,
         working: kind === "started" || kind === "question",
         task: kind === "started" ? text?.slice(0, 200) : meta.task,

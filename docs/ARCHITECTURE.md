@@ -107,6 +107,16 @@ with live progress and questions.
 Only folders Claude Code has already worked in can get a new session. A brand-new folder
 starts on the computer.
 
+## Without helper programs (`plugin/hooks/inside.ts`)
+
+Where macOS won't run the helper programs, each session reaches the relay itself, over HTTP,
+from inside Claude Code: one request waits at the relay (`POST /peer`, held up to 25 s) for the
+app's calls, and what the session says goes at once. The session also answers for its computer
+(`computer.ts`, the device agent's jobs in TypeScript), and Claude Code's questions wait on a
+mailbox in the hub. The relay holds polling sessions and WebSockets behind one handle, so
+nothing else changes. The plugin chooses the mode per computer: helpers where they run, this
+where they don't ([decision](DECISIONS.md)).
+
 ## Getting it onto a computer
 
 The plugin is saved to the person's Claude account once and syncs to every computer signed in

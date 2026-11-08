@@ -1,6 +1,6 @@
 {
   "name": "codebridge",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Lets the Claude app (voice mode included) talk to your Claude Code chat: send requests, wait for replies, answer its questions.",
   "author": { "name": "Prajwal Shete" },
   "license": "MIT",

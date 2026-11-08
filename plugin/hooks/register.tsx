@@ -13,8 +13,8 @@ import type { Register } from 'claude-code'
 import { changesOfLastTurn, describeTool } from './claude'
 import { type Picture, prepareImage } from './images'
 import { refreshBrief, sideFinished } from './side'
-import { type EventPicture, KEY_PATTERN, bridgeKey, post, reportState, sendEvent, setWatched, startConnector, stopConnector } from './connector'
-import { computerSetting, ensureDeviceAgent, setComputerSetting, stopDeviceAgent } from './device'
+import { type EventPicture, KEY_PATTERN, bridgeKey, helperSetting, post, reportState, sendEvent, setWatched, startConnector, stopConnector } from './connector'
+import { computerSetting, setComputerSetting, stopDeviceAgent } from './device'
 import { startNewAccount, switchToLinking } from './link'
 import { answerOnScreen, askThroughApp, pick, sendPicks } from './questions'
 import {
@@ -25,6 +25,7 @@ import {
   NO_QUESTION,
   PANE,
   addLog,
+  bridgeUp,
   cleanPrompt,
   errorText,
   note,
@@ -54,8 +55,8 @@ async function setEnabled($: Engine, on: boolean): Promise<void> {
   await $.store.set('enabled', on)
   await update($, link, s => ({ ...s, enabled: on }))
   if (on) {
+    // The device agent follows once the connector runs (connector.ts), where helper programs may run.
     await startConnector($)
-    await ensureDeviceAgent($)
   } else {
     await stopConnector($)
     await stopDeviceAgent($)
@@ -66,7 +67,7 @@ async function setEnabled($: Engine, on: boolean): Promise<void> {
 async function newKey($: Engine, given?: string): Promise<void> {
   await bridgeKey($, !given, given)
   await stopConnector($)
-  for (let i = 0; i < 30 && rt.connector; i++) await $.clock.sleep(100)
+  for (let i = 0; i < 30 && bridgeUp(); i++) await $.clock.sleep(100)
   await startConnector($)
 }
 
@@ -107,6 +108,22 @@ async function setScreen($: Engine, on: boolean): Promise<void> {
 async function setOpenIn($: Engine, where: 'auto' | 'desktop' | 'terminal'): Promise<void> {
   await setComputerSetting($, 'openIn', where === 'auto' ? null : where)
   await update($, link, s => ({ ...s, openIn: where }))
+}
+
+/**
+ * How this computer connects (shared by its sessions): `on` uses the helper programs (and tries
+ * them again where they were found blocked), `off` never does, `auto` uses them unless blocked.
+ * Each session here picks the change up when it next connects; this one reconnects now.
+ */
+async function setHelpers($: Engine, helpers: 'auto' | 'on' | 'off'): Promise<void> {
+  await setComputerSetting($, 'helpers', helpers === 'auto' ? null : helpers)
+  if (helpers === 'on') await setComputerSetting($, 'helpersBlocked', null)
+  await update($, link, s => ({ ...s, helpers }))
+  if (helpers === 'off') await stopDeviceAgent($)
+  if (!(await read($, link)).enabled) return
+  await stopConnector($)
+  for (let i = 0; i < 30 && bridgeUp(); i++) await $.clock.sleep(100)
+  await startConnector($)
 }
 
 /**
@@ -181,6 +198,7 @@ function actionsFor($: Engine): Actions {
     setAskFirst: on => run('ask first', setAskFirst($, on)),
     setScreen: on => run('screenshots', setScreen($, on)),
     setOpenIn: where => run('open in', setOpenIn($, where)),
+    setHelpers: helpers => run('helper programs', setHelpers($, helpers)),
     newKey: () => run('new key', confirmNewKey($)),
     copy: (text, surface) => run('copy', $.ui.copy({ text, surface })),
     clear: () => run('clear', update($, log, () => [])),
@@ -284,10 +302,10 @@ export const register: Register = (on, config) => {
     const screen = (await computerSetting($, 'screen')) !== false
     const savedOpenIn = await computerSetting($, 'openIn')
     const openIn: 'auto' | 'desktop' | 'terminal' = savedOpenIn === 'desktop' || savedOpenIn === 'terminal' ? savedOpenIn : 'auto'
-    await update($, link, s => ({ ...s, enabled, connected: false, watched: false, askFirst: rt.askFirst, screen, openIn }))
+    const helpers = await helperSetting($)
+    await update($, link, s => ({ ...s, enabled, connected: false, watched: false, askFirst: rt.askFirst, screen, openIn, helpers, inside: false }))
     if (enabled) {
       void startConnector($)
-      void ensureDeviceAgent($)
     }
     return next(e)
   })
@@ -453,7 +471,7 @@ export const register: Register = (on, config) => {
 
   // Claude Code's questions go to the Claude app in a turn it asked for, or while it watches.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
-    if (e.tool !== 'AskUserQuestion' || e.agentId !== undefined || !rt.connector) return next(e)
+    if (e.tool !== 'AskUserQuestion' || e.agentId !== undefined || !bridgeUp()) return next(e)
     const linked = await read($, link)
     if (linked.paused || (rt.turnEntries.length === 0 && !linked.watched)) return next(e)
     const answers = await askThroughApp($, e, questions => void sendEvent($, { kind: 'question', questions, ...appTurn() }))

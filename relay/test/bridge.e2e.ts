@@ -117,7 +117,7 @@ function deviceAgent(id: string, name: string, projects: Array<{ name: string; f
 const opened: any[] = [];
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
-check(/^1\.2\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+check(/^1\.4\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
 const tools = (await rpc("tools/list")).result.tools.map((t: any) => t.name);
 const expected = ["list_sessions", "list_projects", "start_session", "resume_session", "fork_session", "rename_session", "link_computer", "rename_device", "watch_sessions", "wait_for_updates", "send_message", "answer_question", "catch_up", "ask", "stop_session", "show_screen"];
 check(tools.length === expected.length && expected.every((t) => tools.includes(t)), `the tools: ${tools.join(", ")}`);

@@ -10,7 +10,8 @@ start new sessions, resume old ones, and rename them, all by voice.
 ```
 Claude app ──MCP──▶ relay (Cloudflare Worker) ◀──WebSocket── device agent (one per computer)
  (phone, desktop)    one Durable Object per key   ◀──WebSocket── connector ── plugin ── Claude Code
-                                                                (Swift, one per session)  (a session)
+                                                  ◀────HTTP───────────────── plugin     (a session)
+                                                   (no helper programs: the session itself)
 ```
 
 - **Devices → projects → sessions.** Each computer has projects (folders, named after
@@ -67,6 +68,14 @@ counts it as part of Claude, with Claude's permissions; there is no separate bac
 allow. It answers for the computer while the Claude desktop app runs, even with no session open,
 and quits with it. Its programs are in `~/.config/claude-bridge/bin/`, its log in
 `~/Library/Logs/claude-bridge-device.log`. `/bridge off` stops it.
+
+**Macs that refuse the helper programs** (a managed Mac's "access denied"): each session then
+talks to the relay itself, over HTTP, from inside Claude Code, and answers for its computer too.
+The plugin switches by itself the first time a helper won't run, and remembers it. Choose it
+yourself in the panel (Settings, **Helper programs**: Auto, Use them, Inside Claude only), or set
+it once in `~/.claude/settings.json` so no helper is ever launched there:
+`{ "env": { "CLAUDE_BRIDGE_HELPERS": "off" } }`. Without the helpers, the computer answers the
+Claude app while a Claude Code session is open on it.
 
 ### 3. Your first computer
 

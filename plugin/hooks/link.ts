@@ -10,8 +10,7 @@
 import { atom, update } from 'claude-code'
 
 import { KEY_PATTERN, bridgeKey, keyPath, relayUrl, savedCredential, startConnector, stopConnector } from './connector'
-import { ensureDeviceAgent } from './device'
-import { type Engine, errorText, note, rt, INITIAL_LINK } from './state'
+import { type Engine, bridgeUp, errorText, note, rt, INITIAL_LINK } from './state'
 
 const link = atom({ plugin: 'codebridge', key: 'link' } as const, INITIAL_LINK)
 
@@ -75,7 +74,6 @@ export async function startLinking($: Engine): Promise<void> {
   if (await savedCredential($)) {
     await update($, link, s => ({ ...s, linkCode: '' }))
     await startConnector($)
-    await ensureDeviceAgent($)
   }
 }
 
@@ -97,7 +95,6 @@ export async function startNewAccount($: Engine): Promise<void> {
   }
   await update($, link, s => ({ ...s, linkCode: '' }))
   await startConnector($)
-  await ensureDeviceAgent($)
 }
 
 /**
@@ -111,7 +108,7 @@ export async function switchToLinking($: Engine): Promise<void> {
   else if (held) await $.process.run(['rm', '-f', path])
   await $.fs.write(await linkFile($), '{}')
   await stopConnector($)
-  for (let i = 0; i < 30 && rt.connector; i++) await $.clock.sleep(100)
+  for (let i = 0; i < 30 && bridgeUp(); i++) await $.clock.sleep(100)
   await update($, link, s => ({ ...s, key: '', url: '', connected: false, watched: false, paused: false, linkCode: '' }))
   await note($, 'switched to linking with a code')
   void startLinking($)

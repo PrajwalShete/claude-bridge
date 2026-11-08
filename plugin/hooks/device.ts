@@ -3,7 +3,7 @@
 // Claude, it answers for the computer (its projects, its sessions' history, starting, resuming,
 // renaming and forking sessions) for as long as Claude runs.
 
-import { chatBase, ensureBinary } from './connector'
+import { chatBase, ensureBinary, helpersBlocked, usesHelpers } from './connector'
 import { type Engine, errorText, note, rt } from './state'
 
 const LABEL = 'com.claudebridge.device'
@@ -55,6 +55,12 @@ export async function ensureDeviceAgent($: Engine): Promise<void> {
 
 async function keepAgentRunning($: Engine): Promise<void> {
   try {
+    // Not where helper programs don't run: the sessions answer for the computer (inside.ts).
+    if (!(await usesHelpers($))) {
+      rt.agentTimer?.cancel()
+      rt.agentTimer = undefined
+      return
+    }
     const h = await home($)
     await deviceId($)
     if ((await computerSetting($, 'chatUrl')) !== chatBase()) await setComputerSetting($, 'chatUrl', chatBase())
@@ -79,6 +85,15 @@ async function keepAgentRunning($: Engine): Promise<void> {
       log,
     ])
     await note($, started.exitCode === 0 ? `device agent started${rebuilt ? ' (new build)' : ''}` : `device agent didn’t start: ${started.stderr.slice(0, 200)}`)
+    // One macOS refuses to run is gone at once; twice in a row, and this computer stops trying.
+    $.clock.after(3000, async () => {
+      if (await runningAgent($, h)) {
+        rt.agentRefused = 0
+        return
+      }
+      rt.agentRefused++
+      if (rt.agentRefused >= 2) await helpersBlocked($, 'the device agent didn’t stay running')
+    })
   } catch (error) {
     await note($, `device agent: ${errorText(error)}`)
   }

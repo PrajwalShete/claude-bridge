@@ -10,6 +10,8 @@ export type LinkState = {
   /** The connector URL to add in the Claude app, and the key to paste on its sign-in page. */
   url: string
   key: string
+  /** While this computer isn't linked to an account yet: the code to read to the Claude app. */
+  linkCode: string
   /** This session puts the app's messages in its prompt box for the person to send, instead of running them. */
   askFirst: boolean
   /** This computer lets the Claude app take screenshots (show_screen). */

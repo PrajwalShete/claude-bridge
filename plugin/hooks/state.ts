@@ -13,7 +13,7 @@ export const PANE = 'claude-bridge'
 
 // Every file that reads or writes a value declares its own atom for it (the validator checks
 // each `$.state` key where it is used); the starting values they share live here.
-export const INITIAL_LINK: LinkState = { enabled: true, connected: false, watched: false, paused: false, url: '', key: '', askFirst: false, screen: true, openIn: 'auto' }
+export const INITIAL_LINK: LinkState = { enabled: true, connected: false, watched: false, paused: false, url: '', key: '', askFirst: false, screen: true, openIn: 'auto', linkCode: '' }
 export const INITIAL_CLAUDE: ClaudeActivity = { isWorking: false, tools: [], replies: [] }
 export const INITIAL_LOG: LogEntry[] = []
 export const NO_QUESTION = null as PendingQuestion | null
@@ -67,6 +67,8 @@ export const rt = {
   newKeyAskedAt: 0,
   /** This session puts the app's messages in its prompt box instead of running them. */
   askFirst: false,
+  /** Waiting for this computer to be linked from the Claude app (link.ts). */
+  linking: false,
 }
 
 // MARK: Message ids

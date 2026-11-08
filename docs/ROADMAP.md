@@ -17,6 +17,6 @@ Parked ideas and decided-but-unbuilt changes.
 ## Ideas
 
 - A ping to the phone when a long task finishes and no call is waiting, through `$.ui.notify` (needs a check that it reaches the phone).
-- Per-device keys with revocation (instead of one shared account key).
+- Revoking a linked computer's credential (each computer now has its own).
 - Starting a session in a folder Claude Code has never worked in.
 - Make the plugin's relay defaults empty before the repository goes public (self-hosting first).

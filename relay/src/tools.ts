@@ -23,6 +23,7 @@ export const INSTRUCTIONS = [
   "Catching up: before working with a session you haven't followed, call catch_up: the session's goal, what it has done, its status now, its last several exchanges (including what the person typed on the computer), decisions, files touched and open questions. For an exact detail (an error message, a URL, a list Claude Code wrote), call ask: it quotes the session's own words, and checks with tools only when it must (that answer then comes as an update). Neither disturbs the session.",
   "Sessions that aren't open: list_projects shows a computer's projects. start_session starts a new session in a project (give it a name and, if the person said what it should do, the first message). resume_session with a project lists its recent sessions, newest first and numbered (at most 15): read them out, and when the person picks a number, call resume_session again with it. Don't search history by date or topic; offer the numbered list. Sessions open where the computer is set to open them (the desktop app or a terminal); pass open_in only when the person says where.",
   "Side chats: when the person wants something else done with a session's full context without disturbing it (\"by the way, in a side chat, have Nav write the tests\"), call fork_session with that session and the side task in their words. The side chat knows everything the original knows; the original carries on with its own work. Both are watched, so news from each comes to you; address the side chat by its name afterwards. A new session from scratch is start_session instead.",
+  "Another computer: when the person wants to add one, they read you the code its Claude Bridge panel shows; call link_computer with it.",
   "Names: rename_session gives a session the name the person wants to call it by (an open one, or a number from the last list); rename_device names a computer.",
   "When telling the person what Claude Code did: outcome first, anything that failed, any question it asked. They are often listening by voice: never read code, long paths, URLs or markdown symbols aloud; describe instead, and offer more detail.",
   "Pictures (from show_screen, or shared by Claude Code with a reply) come with private links that work for an hour: give the person the link, since you may not see the picture yourself.",
@@ -126,6 +127,17 @@ export const TOOLS = [
       device: DEVICE,
     },
     ["name"],
+    false,
+  ),
+  tool(
+    "link_computer",
+    "Link a computer",
+    "Links another computer to this account, so its sessions are reachable too. The computer's Claude Bridge panel (or the Bridge button below its prompt) shows a 12-character code: the person reads it to you. Only when the person asks to link a computer.",
+    {
+      code: { type: "string", description: "The code the computer shows, as the person reads it (spaces and dashes don't matter)." },
+      name: { type: "string", description: "What to call it, if the person says. Optional; it otherwise goes by its own name." },
+    },
+    ["code"],
     false,
   ),
   tool(

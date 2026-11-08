@@ -87,6 +87,10 @@ type FeedEvent = {
 type History = { device: string; folder: string; project: string; ids: string[]; names: string[]; at: number };
 
 type Pending = { resolve: (r: unknown) => void; timer: ReturnType<typeof setTimeout> };
+/** A computer linked from the Claude app, by the hash of its credential's secret. */
+type LinkedDevice = { name: string; at: number };
+/** A code a new computer offered, while it waits to be linked; then the credential it was given. */
+type LinkOffer = { expires: number; credential?: string };
 type Watching = { ids: string[]; from: Record<string, number> };
 
 const PROTOCOL = 4;
@@ -106,6 +110,9 @@ const HISTORY_TTL_MS = 60 * 60_000;
 const OPEN_WAIT_MS = 60_000;
 const NAMES_TTL_MS = 20_000;
 const HISTORY_LIMIT = 15;
+/** How long a new computer's link code stays good. */
+const LINK_TTL_MS = 10 * 60_000;
+const LINK_WAIT_MS = 25_000;
 
 export function errorResult(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
@@ -149,9 +156,14 @@ export class BridgeHub extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
   }
 
-  /** WebSocket upgrade from the Worker, which already checked the key. */
+  /** WebSocket upgrade from the Worker, which checked the account's key, or names a linked computer's credential. */
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket upgrade", { status: 426 });
+    const device = request.headers.get("X-Bridge-Device");
+    if (device) {
+      const linked = (await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {};
+      if (!linked[device]) return new Response("This computer's link to Claude Bridge was removed. Link it again.", { status: 401 });
+    }
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, ["peer"]);
     server.serializeAttachment({ ready: false, connectedAt: Date.now(), device: "" } satisfies Peer);
@@ -270,6 +282,70 @@ export class BridgeHub extends DurableObject<Env> {
 
   private nameOf(s: { session: string; project: string; side?: boolean }): string {
     return this.names.get(s.session)?.name ?? (s.side ? `side chat in ${s.project}` : s.project);
+  }
+
+  // MARK: Linking computers
+  //
+  // A new computer shows a code; the person reads it to the Claude app, which is signed in to the
+  // account (link_computer). The account's hub makes the computer its own credential (never the
+  // account's key), keeps only its hash, and hands it over through a hub of its own named after
+  // the code, which the computer is waiting on.
+
+  /** The hub of one code: a new computer offers it. */
+  async linkOffer(): Promise<{ ok: true; expires: number }> {
+    const now = await this.ctx.storage.get<LinkOffer>("offer");
+    const offer: LinkOffer = now && now.expires > Date.now() ? now : { expires: Date.now() + LINK_TTL_MS };
+    await this.ctx.storage.put("offer", offer);
+    return { ok: true, expires: offer.expires };
+  }
+
+  /** The hub of one code: the computer waits for its credential, which is handed over once. */
+  async linkWait(): Promise<{ credential?: string; pending?: true; expired?: true }> {
+    const take = async () => {
+      const offer = await this.ctx.storage.get<LinkOffer>("offer");
+      if (!offer || offer.expires < Date.now()) return { expired: true as const };
+      if (!offer.credential) return null;
+      await this.ctx.storage.delete("offer");
+      return { credential: offer.credential };
+    };
+    const now = await take();
+    if (now) return now;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.updateWaiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, LINK_WAIT_MS);
+      this.updateWaiters.add(done);
+    });
+    return (await take()) ?? { pending: true };
+  }
+
+  /** The hub of one code: the account's hub hands over the credential it made. */
+  async linkApprove(credential: string): Promise<boolean> {
+    const offer = await this.ctx.storage.get<LinkOffer>("offer");
+    if (!offer || offer.expires < Date.now() || offer.credential) return false;
+    await this.ctx.storage.put("offer", { ...offer, credential });
+    for (const wake of [...this.updateWaiters]) wake();
+    return true;
+  }
+
+  /** link_computer: links the computer showing `code` to this account. */
+  async linkComputer(code: unknown, name: unknown, accountId: string): Promise<ToolResult> {
+    const wanted = typeof code === "string" ? code.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+    if (!/^[A-HJ-NP-Z2-9]{12}$/.test(wanted)) return errorResult("That isn't a link code: it is 12 letters and digits, shown in the Claude Bridge panel of the computer to link.");
+    const secret = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const credential = `cbd_${accountId}_${secret}`;
+    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret)))]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const handed = await this.env.HUBS.get(this.env.HUBS.idFromName(`link:${wanted}`)).linkApprove(credential);
+    if (!handed) return errorResult("That code isn't waiting to be linked (it lasts ten minutes, and links once). Check the code on the computer's Claude Bridge panel.");
+    const linked = (await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {};
+    const label = typeof name === "string" && name.trim() ? name.trim().slice(0, 60) : "a computer";
+    await this.ctx.storage.put("linked", { ...linked, [hash]: { name: label, at: Date.now() } });
+    return textResult({ status: "linked", note: "The computer connects in a few seconds; it then appears in list_sessions under its own name." });
   }
 
   // MARK: Pausing

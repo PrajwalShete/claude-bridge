@@ -50,41 +50,34 @@ Edit `relay/wrangler.jsonc` first: set `routes` and `PUBLIC_ORIGIN` to your own 
 
 ### 2. Install the plugin
 
-Requires macOS with Xcode's command line tools (the connector and the device agent are built
-on first use) and the Claude desktop app (sessions are started and resumed in it).
+Save `codebridge.plugin` to your Claude account (in the Claude app or claude.ai: Customize,
+Plugins, Upload plugin, or **Save plugin** on a `.plugin` file). Every computer signed in to the
+account then gets it in Claude Code by itself, the desktop app and the CLI alike: nothing to
+install, no Xcode (the two small helper programs ship prebuilt for Apple silicon and Intel).
 
-Point Claude Code at the plugin folder in `~/.claude/settings.json`:
-
-```json
-{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-bridge/plugin" } }
-```
+To run it from this repository instead, while developing, point Claude Code at the folder in
+`~/.claude/settings.json`: `{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-bridge/plugin" } }`.
+A copy loaded that way takes precedence over the synced one of the same name.
 
 Set your relay in the plugin's options (`relayUrl`, and `chatUrl` if sessions should connect
 through a different hostname).
 
-The first session installs the **device agent**, a launchd agent
-(`~/Library/LaunchAgents/com.claudebridge.device.plist`, log in
-`~/Library/Logs/claude-bridge-device.log`) that keeps the computer reachable with no session
-open. `/bridge off` stops it.
+Each computer runs a small **device agent** as a launchd agent
+(`~/Library/LaunchAgents/com.claudebridge.device.plist`, its programs in
+`~/.config/claude-bridge/bin/`, its log in `~/Library/Logs/claude-bridge-device.log`): it keeps
+the computer reachable with no session open. `/bridge off` stops it.
 
-### 3. Connect the Claude app
+### 3. Your first computer
 
-1. In Claude Code, type `/bridge` to open the panel.
-2. In the Claude app: **Settings → Connectors → Add custom connector**, and paste the URL from
-   **Copy connector URL**.
-3. Click **Connect** and paste the key from **Copy key**.
+Open the Claude Bridge panel (the small "● Bridge" button below the prompt, or `/bridge`) and
+choose **This is my first computer**. Then, in the Claude app: Settings, Connectors, Add custom
+connector with the panel's connector URL, and paste the key on the page that opens.
 
-### 4. More computers
+### 4. Every other computer
 
-On each other Mac, install the plugin the same way, then in any Claude Code session there:
-
-```text
-/bridge key <the key from Copy key on your first computer>
-```
-
-It joins the same account: the Claude app reaches its sessions too, and asks which computer
-when a project exists on more than one. Name computers with `rename_device` ("call this one
-the Studio Mac").
+Its panel shows a code. Tell the Claude app "link my computer, code K7Q2 9FMX 3HDA": it connects
+a few seconds later, with a credential of its own (the account's key never leaves your first
+computer). `/bridge key <key>` still works where you'd rather copy the key.
 
 ## Tools the Claude app gets
 
@@ -99,6 +92,7 @@ question, an answer) comes back as news.
 | `resume_session` | A project's 15 most recent sessions, numbered; then opens the one picked by number. |
 | `fork_session` | Starts a side chat from a session: its whole conversation, a different task, the original undisturbed; both watched. |
 | `rename_session` | Renames a session (open, or by number from the list); kept in its transcript. |
+| `link_computer` | Links another computer to your account, from the code its panel shows. |
 | `rename_device` | Renames a computer. |
 | `watch_sessions` | Chooses the sessions whose every move reaches the Claude app. |
 | `wait_for_updates` | Waits for news and returns it the moment it happens. |
@@ -160,6 +154,12 @@ uses it. Keep it private (it lives in `~/.config/claude-bridge/key`, readable on
 cd relay && npx tsc --noEmit                 # type-check the relay
 claude plugin validate plugin                # check the plugin as Claude Code will load it
 claude plugin test plugin                    # run the plugin's tests
+```
+
+After changing a Swift program, rebuild the prebuilt binaries (universal, ad-hoc signed):
+
+```bash
+scripts/build-binaries.sh            # --check fails if one is older than its source
 ```
 
 End to end, with real connectors and stand-in device agents against a local relay:

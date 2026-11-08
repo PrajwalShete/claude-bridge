@@ -5,19 +5,25 @@ import { changesOf } from '../hooks/claude'
 import { cleanPrompt, isPersonPrompt } from '../hooks/state'
 import { FOOTER, PANE } from './fixtures'
 
-test('the panel draws its Bridge section, its status and the setup on every surface', async ($, on) => {
+test('a computer not linked yet shows how to link it, on every surface', async ($, on) => {
   mock.clock(on)
   for (const surface of ['desktop', 'terminal', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect(await ui.find({ text: /Bridge/ })).toBeDefined()
-    expect(await ui.find({ text: /Connecting|Off|Connected|Watched|Paused/ })).toBeDefined()
-    expect(await ui.find({ key: 'setup' })).toBeDefined()
+    expect(await ui.find({ text: /Not linked|Link this computer/ })).toBeDefined()
+    expect(await ui.find({ key: 'new-account' })).toBeDefined()
     await ui.unmount()
   }
 })
 
-test('while not connected, the setup steps are open; Settings opens on a press', async ($, on) => {
+/** A computer that holds the account's key, as the first computer does. */
+const LINKED = {
+  enabled: true, connected: false, watched: false, paused: false, url: 'https://relay.example/0123456789abcdef0123/mcp',
+  key: 'cbrg_' + 'a'.repeat(43), askFirst: false, screen: true, openIn: 'auto', linkCode: '',
+}
+
+test('with the account key, the connect steps show; Settings opens on a press', async ($, on) => {
   mock.clock(on)
+  on('state.get', ($, e, next) => (e.key === 'link' ? { value: { value: LINKED, version: 1 } } : next(e)))
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ key: 'ask-first' })).toBeUndefined()
   await ui.press({ key: 'settings-toggle' })
@@ -27,6 +33,16 @@ test('while not connected, the setup steps are open; Settings opens on a press',
   expect(await ui.find({ key: 'ask-first' })).toBeDefined()
   expect(await ui.find({ key: 'screen' })).toBeDefined()
   expect(await ui.find({ key: 'open-in' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a computer linked from the app shows it is linked, and no key to copy', async ($, on) => {
+  mock.clock(on)
+  const linked = { ...LINKED, key: 'cbd_0123456789abcdef0123_' + 'b'.repeat(64) }
+  on('state.get', ($, e, next) => (e.key === 'link' ? { value: { value: linked, version: 1 } } : next(e)))
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ text: /Linked from the Claude app/ })).toBeDefined()
+  expect(await ui.find({ key: 'copy-key' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -40,7 +56,7 @@ test("the panel lists only the app's messages, each answered or not", async ($, 
   on('state.get', ($, e, next) => (e.key === 'log' ? { value: { value: log, version: 1 } } : next(e)))
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ text: /fix the header/ })).toBeDefined()
-  expect(await ui.find({ text: /Answered/ })).toBeDefined()
+  expect(await ui.find({ text: /· Answered/ })).toBeDefined()
   expect(await ui.find({ text: /Not answered/ })).toBeDefined()
   expect(await ui.find({ text: /Fixed the header/ })).toBeUndefined()
   await ui.unmount()

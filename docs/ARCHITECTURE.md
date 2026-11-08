@@ -96,6 +96,19 @@ with live progress and questions.
 Only folders Claude Code has already worked in can get a new session. A brand-new folder
 starts on the computer.
 
+## Getting it onto a computer
+
+The plugin is saved to the person's Claude account once and syncs to every computer signed in
+to it. Its two Swift programs ship prebuilt (universal, ad-hoc signed, stamped with their
+source's SHA-256), so a computer needs no Xcode: the plugin copies the matching one into
+`~/.config/claude-bridge/bin/` and builds from source only when a source changed.
+
+A computer joins the account by **linking**: with no credential, it shows a code; the person
+reads it to the Claude app (`link_computer`), and the relay hands that computer a credential of
+its own, `cbd_<account id>_<secret>`, through a short-lived hub named after the code. The
+account's hub keeps only the hash of each credential's secret and checks it on every connect.
+The account's key, which the Claude app signs in with, stays on the first computer.
+
 ## Connector (`plugin/connector/connector.swift`)
 
 A small native process for each open session. The plugin builds it with `swiftc` on first use.

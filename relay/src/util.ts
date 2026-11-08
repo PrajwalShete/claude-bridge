@@ -40,6 +40,12 @@ export async function idFromKey(key: string): Promise<string> {
 
 export const ID_PATTERN = "[a-f0-9]{20}";
 
+/** A computer's own credential, given when it was linked to an account: `cbd_<account id>_<secret>`. */
+export const DEVICE_CREDENTIAL = /^cbd_([a-f0-9]{20})_([A-Za-z0-9_-]{40,64})$/;
+
+/** A code a new computer shows to be linked: 12 letters and digits, none easily misread. */
+export const LINK_CODE = /^[A-HJ-NP-Z2-9]{12}$/;
+
 // ---- Signed tokens --------------------------------------------------------------------------
 // Everything the OAuth flow would normally store (clients, codes, tokens) is instead a payload
 // signed with SIGNING_KEY: `<base64url json>.<base64url HMAC-SHA256>`.

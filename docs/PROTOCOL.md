@@ -69,6 +69,19 @@ Same endpoint and key. Settings come from `~/.config/claude-bridge/`: `key`, `de
 
 Any call can answer `{ error }`.
 
+## Linking a computer
+
+A computer with no credential offers a code (12 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`)
+and waits; the Claude app approves it with `link_computer`.
+
+| Request | Answer |
+| --- | --- |
+| `POST /link/<code>` | `{ ok, expires }`: the code is good for ten minutes. |
+| `GET /link/<code>` | Waits up to 25 s: `{ credential }` once (a `cbd_<account id>_<secret>` of its own), else `{ pending: true }`, or `{ expired: true }`. |
+
+The computer then connects with `Authorization: Bearer <credential>`. The account's hub keeps
+only the SHA-256 of each credential's secret, so a credential can be checked and revoked alone.
+
 ## Plugin ⇄ connector
 
 The plugin starts the connector with one JSON object on stdin:

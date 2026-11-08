@@ -40,7 +40,7 @@ export async function handleMcp(req: Request, env: Env, id: string, origin: stri
 
   const hub = env.HUBS.get(env.HUBS.idFromName(id));
   const pictureBase = `${origin}/p/${id}`;
-  const responses = await Promise.all(requests.map((r) => handleRequest(r, hub, pictureBase)));
+  const responses = await Promise.all(requests.map((r) => handleRequest(r, hub, pictureBase, id)));
   return json(Array.isArray(body) ? responses : responses[0], 200, { "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id" });
 }
 
@@ -50,12 +50,12 @@ let versionCache: string | undefined;
 async function serverVersion(): Promise<string> {
   if (!versionCache) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ TOOLS, INSTRUCTIONS })));
-    versionCache = `1.0.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    versionCache = `1.1.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
   }
   return versionCache;
 }
 
-async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>, pictureBase: string) {
+async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>, pictureBase: string, id: string) {
   const ok = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
   const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id: msg.id, error: { code, message } });
   switch (msg.method) {
@@ -103,6 +103,8 @@ async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>,
           return ok(await hub.forkSession(args, timeout, pictureBase));
         case "rename_session":
           return ok(await hub.renameSession(args, pictureBase));
+        case "link_computer":
+          return ok(await hub.linkComputer(args.code, args.name, id));
         case "rename_device":
           return ok(await hub.renameDevice(args));
         case "watch_sessions":

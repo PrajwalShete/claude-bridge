@@ -15,6 +15,7 @@ import { type Picture, prepareImage } from './images'
 import { refreshBrief, sideFinished } from './side'
 import { type EventPicture, KEY_PATTERN, bridgeKey, post, reportState, sendEvent, setWatched, startConnector, stopConnector } from './connector'
 import { computerSetting, ensureDeviceAgent, setComputerSetting, stopDeviceAgent } from './device'
+import { startNewAccount } from './link'
 import { answerOnScreen, askThroughApp, pick, sendPicks } from './questions'
 import {
   type Engine,
@@ -164,6 +165,7 @@ function actionsFor($: Engine): Actions {
     sendPicks: () => run('answer', sendPicks($)),
     answerOnScreen: () => run('answer', answerOnScreen($)),
     openPane: () => run('open', openPane($)),
+    startNewAccount: () => run('new account', startNewAccount($)),
   }
 }
 
@@ -267,6 +269,7 @@ export const register: Register = (on, config) => {
   })
 
   on('session.end', async ($, e, next) => {
+    rt.linking = false
     await stopConnector($)
     return next(e)
   })

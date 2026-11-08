@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 (2026-11-09)
+
+- **Other computers with no setup.** Save the plugin to your Claude account once: every computer
+  signed in gets it. Helper programs ship prebuilt (no Xcode). A new computer is linked by
+  telling the Claude app its code (`link_computer`), with a credential of its own.
+
 ## 1.0.0 (2026-11-08)
 
 The first version: Claude Code, reachable from the Claude app, voice mode included.

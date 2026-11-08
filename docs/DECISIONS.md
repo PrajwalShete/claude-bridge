@@ -2,6 +2,28 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-09: other computers with no setup
+
+1. **Saved to the Claude account, synced to every computer.** A plugin saved to the account
+   (a `.plugin` file's Save plugin, or Customize, Plugins) reaches Claude Code on every computer
+   signed in, the desktop app and the CLI alike, at the next start. Nothing is installed by hand.
+   On a computer that runs a development copy (`CLAUDE_CODE_PLUGIN_DIRS`), that copy wins over
+   the synced one of the same name.
+2. **No Xcode.** The connector and the device agent ship prebuilt, as universal binaries with
+   an ad-hoc signature, each stamped with its source's SHA-256. The plugin copies the matching
+   one into `~/.config/claude-bridge/bin/` (a new file each time, then moved into place; macOS
+   kills a program overwritten in place). It sets the file executable and clears quarantine,
+   and builds from source only where a source changed, as in a development copy. launchd runs
+   the device agent from that fixed folder, so plugin updates never strand it.
+3. **Linking by voice, not by copying a key.** A new computer shows a code; the person tells
+   the Claude app "link my computer, code …". The relay gives that computer a credential of its
+   own (`cbd_…`), keeping only its hash, and never hands out the account's key. That's the
+   per-device key the safety proposal wanted (#6.3): each can be revoked alone (the revoking
+   itself is still to build). The first computer makes the account's key (This is my first
+   computer).
+4. **No automatic key.** A computer with no credential no longer makes one by itself: that made
+   every new computer a separate account.
+
 ## 2026-11-08: pausing
 
 1. **One click pauses Claude Bridge everywhere: Pause everywhere in the panel.** The

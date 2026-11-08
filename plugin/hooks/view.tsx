@@ -33,6 +33,8 @@ export type Actions = {
   sendPicks: () => void
   answerOnScreen: () => void
   openPane: () => void
+  /** The first computer of an account: make its key here. */
+  startNewAccount: () => void
 }
 
 const ON_OFF = [
@@ -53,6 +55,7 @@ const MESSAGES = [
 
 export function linkLine(l: LinkState): { text: string; color: string } {
   if (!l.enabled) return { text: 'Off', color: 'inactive' }
+  if (!l.key) return { text: 'Not linked to your account yet', color: 'inactive' }
   if (!l.connected) return { text: 'Connecting…', color: 'warning' }
   if (l.paused) return { text: 'Paused · the Claude app can’t reach any session', color: 'inactive' }
   if (l.watched) return { text: 'Watched by the Claude app', color: 'success' }
@@ -62,25 +65,17 @@ export function linkLine(l: LinkState): { text: string; color: string } {
 /** The one word the header's status shows. */
 function statusWord(l: LinkState): string {
   if (!l.enabled) return 'Off'
+  if (!l.key) return 'Not linked'
   if (!l.connected) return 'Connecting'
   if (l.paused) return 'Paused'
   return l.watched ? 'Watched' : 'Connected'
-}
-
-function since(ms: number): string {
-  const m = Math.round(ms / 60_000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m} min ago`
-  const h = Math.round(m / 60)
-  return h < 24 ? `${h} h ago` : `${Math.round(h / 24)} d ago`
 }
 
 /** What the Claude app sent this session: only whether each was answered. */
 function appMessages(m: ViewModel): Array<{ id: string; text: string; answered: boolean; at: number }> {
   return m.log
     .filter(entry => entry.kind === 'app')
-    .slice(-10)
-    .reverse()
+    .slice(-12)
     .map(entry => ({ id: entry.id, text: entry.text.trim(), answered: entry.status === 'done', at: entry.at }))
 }
 
@@ -157,6 +152,28 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions) {
         </Box>,
       )}
 
+      {!m.link.key && m.link.enabled && divider('link-divider')}
+      {!m.link.key &&
+        m.link.enabled &&
+        section(
+          'link',
+          'Link this computer',
+          <Box flexDirection="column" gap="sm">
+            {row(
+              'code-row',
+              ICONS.key,
+              m.link.linkCode ? m.link.linkCode.replace(/(.{4})(?=.)/g, '$1 ') : 'Making a code…',
+              m.link.linkCode ? <Button key="copy-code" variant="secondary" label="Copy" onPress={p => a.copy(m.link.linkCode, p.surface)} /> : undefined,
+            )}
+            <Text size="footnote" dimColor>
+              Tell the Claude app: “link my computer, code {m.link.linkCode ? m.link.linkCode.replace(/(.{4})(?=.)/g, '$1 ') : '…'}”. It connects by itself a few seconds later.
+            </Text>
+            <Box flexDirection="row">
+              <Button key="new-account" plain dimColor label="This is my first computer: start a new account" onPress={a.startNewAccount} />
+            </Box>
+          </Box>,
+        )}
+
       {m.question && divider('question-divider')}
       {m.question &&
         section(
@@ -189,8 +206,17 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions) {
           </Box>,
         )}
 
-      {divider('connect-divider')}
-      {section(
+      {m.link.key && divider('connect-divider')}
+      {m.link.key &&
+        m.link.key.startsWith('cbd_') &&
+        section(
+          'connect',
+          'Your account',
+          row('linked-row', ICONS.link, 'Linked from the Claude app', <Text color="success">✓</Text>),
+        )}
+      {m.link.key &&
+        !m.link.key.startsWith('cbd_') &&
+        section(
         'connect',
         'Connect the Claude app',
         setupShown ? (
@@ -238,26 +264,24 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions) {
       {divider('messages-divider')}
       {section(
         'messages',
-        'From the Claude app',
+        'Activity',
         messages.length === 0 ? (
           <Text size="footnote" dimColor>
-            Messages the Claude app sends this session show up here.
+            Messages from the Claude app show up here.
           </Text>
         ) : (
           <Box flexDirection="column" gap="sm">
             {messages.map(message => (
-              <Box key={message.id} flexDirection="column" gap="xs" padding="sm" borderStyle="round" borderColor="subtle">
-                <Text size="footnote" wrap="wrap">
-                  {message.text.length > 280 ? `${message.text.slice(0, 279)}…` : message.text}
+              <Box key={message.id} flexDirection="column">
+                <Text size="caption">
+                  <Text weight="medium" color="claude">
+                    From the Claude app
+                  </Text>
+                  <Text dimColor> · {message.answered ? 'Answered' : 'Not answered'}</Text>
                 </Text>
-                <Box flexDirection="row" justifyContent="space-between">
-                  <Text size="caption" weight="medium" color={message.answered ? 'success' : 'inactive'}>
-                    {message.answered ? '✓ Answered' : 'Not answered'}
-                  </Text>
-                  <Text size="caption" dimColor>
-                    {since(m.now - message.at)}
-                  </Text>
-                </Box>
+                <Text size="footnote" wrap="wrap">
+                  {message.text}
+                </Text>
               </Box>
             ))}
           </Box>
@@ -280,6 +304,15 @@ export function terminalView(ui: Elements['terminal'], m: ViewModel, a: Actions)
       <Text>
         <Text bold>Claude Bridge</Text> <Text color={l.color}>● {statusWord(m.link)}</Text>
       </Text>
+      {!m.link.key && m.link.enabled && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text>
+            Link this computer: tell the Claude app “link my computer, code{' '}
+            <Text bold>{m.link.linkCode ? m.link.linkCode.replace(/(.{4})(?=.)/g, '$1 ') : '…'}</Text>”.
+          </Text>
+          <Button key="new-account" plain dimColor label="This is my first computer: start a new account" onPress={a.startNewAccount} />
+        </Box>
+      )}
       <Box flexDirection="row" gap={1} marginTop={1}>
         {live && <Button key="pause" label={m.link.paused ? 'Resume' : 'Pause everywhere'} onPress={a.togglePause} />}
         {live && !m.link.paused && <Button key="watch" label={m.link.watched ? 'Stop watching' : 'Watch'} onPress={() => a.setWatched(!m.link.watched)} />}
@@ -355,7 +388,7 @@ export function footerView(ui: Pick<Elements['desktop'], 'Box' | 'Text' | 'Butto
     <Box flexDirection="row" gap="sm" alignItems="center">
       <Box flexDirection="row" alignItems="center">
         {/* A Button draws its children in its own colour, so the dot sits just outside it. */}
-        <Text size="footnote" color={m.link.paused || !m.link.enabled ? 'inactive' : 'success'}>
+        <Text size="footnote" color={m.link.paused || !m.link.enabled || !m.link.key ? 'inactive' : 'success'}>
           ●
         </Text>
         <Button key="bridge-open" plain dimColor label="Bridge" onPress={a.openPane} />

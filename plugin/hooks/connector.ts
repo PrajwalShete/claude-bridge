@@ -6,6 +6,7 @@ import { atom, read, update } from 'claude-code'
 
 import { type Engine, type Process, cleanPrompt, errorText, isPersonPrompt, note, rt, INITIAL_LINK, INITIAL_CLAUDE } from './state'
 import { deviceId } from './device'
+import { startLinking } from './link'
 import { answerTool } from './tools'
 
 const link = atom({ plugin: 'codebridge', key: 'link' } as const, INITIAL_LINK)
@@ -20,7 +21,7 @@ export type ConnectorEvent =
   | { t: 'error'; message: string; code?: string }
   | { t: 'log'; message: string }
 
-function relayUrl(): string {
+export function relayUrl(): string {
   return (rt.options.relayUrl || DEFAULT_RELAY).replace(/\/+$/, '')
 }
 
@@ -53,7 +54,10 @@ function b64url(bytes: Uint8Array): string {
   return out
 }
 
+/** The account's key (`cbrg_…`), the one the Claude app signs in with. */
 export const KEY_PATTERN = /^cbrg_[A-Za-z0-9_-]{40,64}$/
+/** A linked computer's own credential (`cbd_<account id>_<secret>`), given from the Claude app. */
+export const DEVICE_CREDENTIAL = /^cbd_([a-f0-9]{20})_([A-Za-z0-9_-]{40,64})$/
 
 /** The computer's key lives in ~/.config/claude-bridge/key, shared by every session. */
 async function keyPath($: Engine): Promise<string> {
@@ -61,11 +65,21 @@ async function keyPath($: Engine): Promise<string> {
 }
 
 /** The key, made the first time; `fresh` makes a new one; `given` uses one from another computer. */
+/** This computer's saved credential (the account's key, or a linked computer's own), or ''. */
+export async function savedCredential($: Engine): Promise<string> {
+  const saved = String(await $.fs.read(await keyPath($)).catch(() => '')).trim()
+  return KEY_PATTERN.test(saved) || DEVICE_CREDENTIAL.test(saved) ? saved : ''
+}
+
+/**
+ * The credential, saved: `fresh` makes a new account key (a new account, the first computer),
+ * `given` stores one handed over (another computer's key, or the credential linking gave).
+ */
 export async function bridgeKey($: Engine, fresh = false, given?: string): Promise<string> {
   const path = await keyPath($)
   if (!fresh && !given) {
-    const saved = String(await $.fs.read(path).catch(() => '')).trim()
-    if (KEY_PATTERN.test(saved)) return saved
+    const saved = await savedCredential($)
+    if (saved) return saved
   }
   const key = given ?? `cbrg_${b64url(crypto.getRandomValues(new Uint8Array(32)))}`
   await $.fs.write(path, `${key}\n`)
@@ -75,6 +89,8 @@ export async function bridgeKey($: Engine, fresh = false, given?: string): Promi
 
 /** The connector URL for the Claude app: the relay plus an id derived from the key. */
 export async function connectorUrl(key: string): Promise<string> {
+  const linked = key.match(DEVICE_CREDENTIAL)
+  if (linked) return `${relayUrl()}/${linked[1]}/mcp`
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)))
   const id = [...digest].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 20)
   return `${relayUrl()}/${id}/mcp`
@@ -83,29 +99,53 @@ export async function connectorUrl(key: string): Promise<string> {
 // MARK: The process
 
 /**
- * Builds a Swift program from connector/ the first time, or after its source changed: the
- * session connector (connector.swift) or the device agent (device.swift). Sessions starting
- * together may build at once, so each builds to its own file and moves it into place.
+ * Puts one of the plugin's Swift programs (the session connector, `connector.swift`, or the
+ * device agent, `device.swift`) where this computer runs it: `~/.config/claude-bridge/bin/`, a
+ * path that stays put when the plugin updates (launchd points at it).
+ *
+ * The plugin carries both prebuilt (universal, in `connector/prebuilt/`, each stamped with the
+ * SHA-256 of its source), so a computer needs no Xcode: the matching one is copied into place and
+ * made executable. Only where a source changed since (a development copy) is it built with
+ * `swiftc`. Sessions starting together each write their own file and move it into place.
  */
 export async function ensureBinary($: Engine, which: 'connector' | 'device'): Promise<{ path: string; rebuilt: boolean }> {
   const root = $.plugin.root
   const source = `${root}/connector/${which}.swift`
-  const binary = `${root}/connector/bin/claude-bridge-${which}`
-  const [src, bin] = await Promise.all([$.fs.stat(source), $.fs.stat(binary).catch(() => undefined)])
-  if (bin && bin.mtimeMs >= src.mtimeMs) return { path: binary, rebuilt: false }
-  await note($, `building the ${which}`)
-  await $.process.run(['mkdir', '-p', `${root}/connector/bin`])
+  const dir = `${(await $.env.get('HOME').catch(() => undefined)) ?? '/tmp'}/.config/claude-bridge/bin`
+  const binary = `${dir}/claude-bridge-${which}`
+  const stampPath = `${binary}.sha256`
+  const bytes = new TextEncoder().encode(String(await $.fs.read(source)))
+  const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
+  const [installed, stamp] = await Promise.all([
+    $.fs.stat(binary).catch(() => undefined),
+    $.fs.read(stampPath).then(String).catch(() => ''),
+  ])
+  if (installed && stamp.trim() === digest) return { path: binary, rebuilt: false }
+
+  await $.process.run(['mkdir', '-p', dir])
   const temp = `${binary}.${Math.random().toString(36).slice(2, 8)}`
-  const built = await $.process
-    .run(['swiftc', '-O', '-swift-version', '5', '-o', temp, source], { timeoutMs: 600_000 })
-    .catch(() => undefined)
-  if (!built) throw new Error('Building Claude Bridge needs Xcode’s command line tools: run xcode-select --install.')
-  if (built.exitCode !== 0) {
-    await $.process.run(['rm', '-f', temp]).catch(() => undefined)
-    const first = built.stderr.split('\n').find(line => line.includes('error')) ?? built.stderr.slice(0, 300)
-    throw new Error(`Couldn’t build the ${which}: ${first.trim()}`)
+  const prebuilt = `${root}/connector/prebuilt/claude-bridge-${which}`
+  const prebuiltStamp = await $.fs.read(`${prebuilt}.sha256`).then(String).catch(() => '')
+  if (prebuiltStamp.trim() === digest) {
+    await note($, `installing the prebuilt ${which}`)
+    await $.process.run(['cp', prebuilt, temp])
+    // A plugin synced from the account may arrive without its executable bit, or quarantined.
+    await $.process.run(['chmod', '755', temp])
+    await $.process.run(['xattr', '-d', 'com.apple.quarantine', temp]).catch(() => undefined)
+  } else {
+    await note($, `building the ${which} from source`)
+    const built = await $.process
+      .run(['swiftc', '-O', '-swift-version', '5', '-o', temp, source], { timeoutMs: 600_000 })
+      .catch(() => undefined)
+    if (!built) throw new Error('This copy of Claude Bridge has no prebuilt program for this version; building it needs Xcode’s command line tools: run xcode-select --install.')
+    if (built.exitCode !== 0) {
+      await $.process.run(['rm', '-f', temp]).catch(() => undefined)
+      const first = built.stderr.split('\n').find(line => line.includes('error')) ?? built.stderr.slice(0, 300)
+      throw new Error(`Couldn’t build the ${which}: ${first.trim()}`)
+    }
   }
   await $.process.run(['mv', '-f', temp, binary])
+  await $.fs.write(stampPath, `${digest}\n`)
   return { path: binary, rebuilt: true }
 }
 
@@ -130,7 +170,13 @@ export async function startConnector($: Engine): Promise<void> {
   rt.connectorStarting = true
   rt.connectorStopping = false
   try {
-    const key = await bridgeKey($)
+    // A computer with no credential yet links itself first (link.ts); it connects once linked.
+    const key = await savedCredential($)
+    if (!key) {
+      await update($, link, s => ({ ...s, enabled: true, connected: false, watched: false, url: '', key: '' }))
+      void startLinking($)
+      return
+    }
     const url = await connectorUrl(key)
     await update($, link, s => ({ ...s, enabled: true, connected: false, watched: false, url, key }))
     const binary = (await ensureBinary($, 'connector')).path

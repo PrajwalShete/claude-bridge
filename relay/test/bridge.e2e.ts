@@ -117,9 +117,9 @@ function deviceAgent(id: string, name: string, projects: Array<{ name: string; f
 const opened: any[] = [];
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
-check(/^1\.0\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+check(/^1\.1\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
 const tools = (await rpc("tools/list")).result.tools.map((t: any) => t.name);
-const expected = ["list_sessions", "list_projects", "start_session", "resume_session", "fork_session", "rename_session", "rename_device", "watch_sessions", "wait_for_updates", "send_message", "answer_question", "catch_up", "ask", "stop_session", "show_screen"];
+const expected = ["list_sessions", "list_projects", "start_session", "resume_session", "fork_session", "rename_session", "link_computer", "rename_device", "watch_sessions", "wait_for_updates", "send_message", "answer_question", "catch_up", "ask", "stop_session", "show_screen"];
 check(tools.length === expected.length && expected.every((t) => tools.includes(t)), `the tools: ${tools.join(", ")}`);
 const desc = (await rpc("tools/list")).result.tools.find((t: any) => t.name === "send_message")?.description ?? "";
 check(desc.includes("Send only what the person told you") && init.result.instructions.includes("Send Claude Code only what the person has told you to send"), "the send-only-what-asked rule is in the instructions and the send tool");
@@ -278,6 +278,33 @@ r = await call("list_projects", { device: "Studio Mac" });
 check(r.includes("is asking") && r.includes("Deploy to prod?") && r.includes("answer_question"), "a watched session's question reaches the app");
 const quiet = await call("wait_for_updates", { seconds: 5 });
 check(quiet.includes('"news":"none"'), "wait_for_updates with no news returns after its time");
+
+// Linking another computer from the Claude app: it offers a code and waits; the app links it;
+// it gets its own credential (not the account's key) and connects with it.
+const CODE = "K7Q29FMX3HDA";
+let offered = await (await fetch(`${BASE}/link/${CODE}`, { method: "POST" })).json() as any;
+const waiting = fetch(`${BASE}/link/${CODE}`).then((x) => x.json()) as Promise<any>;
+await Bun.sleep(300);
+r = await call("link_computer", { code: "k7q2 9fmx 3hda" });
+const handed = await waiting;
+check(offered.ok === true && r.includes('"status":"linked"') && /^cbd_[a-f0-9]{20}_[a-f0-9]{64}$/.test(handed.credential ?? "") && !String(handed.credential).includes(key), "a new computer is linked from the app and gets a credential of its own");
+r = await call("link_computer", { code: CODE });
+check(r.includes("isn't waiting"), "a code links once");
+const linkedSession = (() => {
+  const sock = `/tmp/cb-multi-linked.sock`;
+  const p = Bun.spawn([BIN], { stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+  p.stdin.write(JSON.stringify({ relay: `ws://localhost:8811/chat/connect`, key: handed.credential, session: "ffff6666-linked", project: "Elsewhere", folder: "/Users/z/Elsewhere", socketPath: sock, device: "dev-linked-3333" }));
+  p.stdin.end();
+  return p;
+})();
+const forged = new WebSocket("ws://localhost:8811/chat/connect", { headers: { Authorization: `Bearer ${String(handed.credential).replace(/.{8}$/, "00000000")}` } } as any);
+let forgedRefused = false;
+forged.onclose = () => (forgedRefused = true);
+forged.onerror = () => (forgedRefused = true);
+await Bun.sleep(1800);
+r = await call("list_sessions");
+check(r.includes("Elsewhere") && forgedRefused, "the linked computer's session connects; a forged credential is refused");
+linkedSession.kill();
 
 // Pausing from a session refuses every call from the app, everywhere, until a session resumes it.
 let ok = await nav.post("/pause", { paused: true });

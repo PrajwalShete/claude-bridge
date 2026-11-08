@@ -50,7 +50,7 @@ let versionCache: string | undefined;
 async function serverVersion(): Promise<string> {
   if (!versionCache) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ TOOLS, INSTRUCTIONS })));
-    versionCache = `1.1.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    versionCache = `1.2.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
   }
   return versionCache;
 }

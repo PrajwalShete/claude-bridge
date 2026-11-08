@@ -62,10 +62,11 @@ A copy loaded that way takes precedence over the synced one of the same name.
 Set your relay in the plugin's options (`relayUrl`, and `chatUrl` if sessions should connect
 through a different hostname).
 
-Each computer runs a small **device agent** as a launchd agent
-(`~/Library/LaunchAgents/com.claudebridge.device.plist`, its programs in
-`~/.config/claude-bridge/bin/`, its log in `~/Library/Logs/claude-bridge-device.log`): it keeps
-the computer reachable with no session open. `/bridge off` stops it.
+Each computer runs a small **device agent**, started from inside Claude by its sessions, so macOS
+counts it as part of Claude, with Claude's permissions; there is no separate background item to
+allow. It answers for the computer while the Claude desktop app runs, even with no session open,
+and quits with it. Its programs are in `~/.config/claude-bridge/bin/`, its log in
+`~/Library/Logs/claude-bridge-device.log`. `/bridge off` stops it.
 
 ### 3. Your first computer
 

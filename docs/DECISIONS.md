@@ -2,6 +2,19 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-09: the device agent runs inside Claude
+
+1. **No launchd agent.** A managed Mac blocked `claude-bridge-device` as a separate background
+   item, although Claude itself is allowed. macOS judges permissions per program, and a launchd
+   agent is its own program.
+2. **Sessions start it instead,** so it counts as part of Claude: its responsible process is
+   Claude Code's, which carries Claude's permissions. It detaches into its own process group,
+   so it outlives the session that started it. It holds a lock, so one runs per computer, and it
+   quits when the Claude desktop app quits. Every session checks every 30 s that it runs.
+3. **The trade-off,** accepted: the computer is reachable with no session open only while the
+   Claude desktop app runs, not after it quits or before anyone logs in. Earlier versions'
+   launchd agent is removed on update.
+
 ## 2026-11-09: other computers with no setup
 
 1. **Saved to the Claude account, synced to every computer.** A plugin saved to the account
@@ -13,8 +26,7 @@ What was decided, and why. The newest decisions come first.
    an ad-hoc signature, each stamped with its source's SHA-256. The plugin copies the matching
    one into `~/.config/claude-bridge/bin/` (a new file each time, then moved into place; macOS
    kills a program overwritten in place). It sets the file executable and clears quarantine,
-   and builds from source only where a source changed, as in a development copy. launchd runs
-   the device agent from that fixed folder, so plugin updates never strand it.
+   and builds from source only where a source changed, as in a development copy.
 3. **Linking by voice, not by copying a key.** A new computer shows a code; the person tells
    the Claude app "link my computer, code …". The relay gives that computer a credential of its
    own (`cbd_…`), keeping only its hash, and never hands out the account's key. That's the

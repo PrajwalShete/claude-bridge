@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 (2026-11-09)
+
+- **The device agent runs inside Claude.** Sessions start it, so macOS counts it as part of Claude,
+  with Claude's permissions, and no separate background item needs allowing. One runs per computer;
+  it quits with the Claude desktop app. The launchd agent of earlier versions is removed.
+
 ## 1.1.0 (2026-11-09)
 
 - **Other computers with no setup.** Save the plugin to your Claude account once: every computer

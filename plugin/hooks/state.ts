@@ -63,6 +63,8 @@ export const rt = {
   deviceId: '' as string,
   /** The device agent was checked (installed, current, running) since this load. */
   deviceAgentChecked: false,
+  /** Checks every 30 s that the device agent still runs. */
+  agentTimer: undefined as Timer | undefined,
   /** When Make a new key was first pressed, for its confirming second press. */
   newKeyAskedAt: 0,
   /** This session puts the app's messages in its prompt box instead of running them. */

@@ -1,7 +1,7 @@
 // This computer in Claude Bridge: its id (~/.config/claude-bridge/device.json, shared with the
-// device agent), and the device agent itself (connector/device.swift), which launchd keeps
-// running so the Claude app can reach the computer with no session open: its projects, its
-// sessions' history, starting, resuming and renaming sessions.
+// device agent), and the device agent itself (connector/device.swift): started from inside
+// Claude, it answers for the computer (its projects, its sessions' history, starting, resuming,
+// renaming and forking sessions) for as long as Claude runs.
 
 import { chatBase, ensureBinary } from './connector'
 import { type Engine, errorText, note, rt } from './state'
@@ -28,59 +28,70 @@ export async function deviceId($: Engine): Promise<string> {
   return (rt.deviceId = id)
 }
 
-function plist(binary: string, log: string): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>${LABEL}</string>
-  <key>ProgramArguments</key><array><string>${esc(binary)}</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>${esc(log)}</string>
-  <key>StandardErrorPath</key><string>${esc(log)}</string>
-</dict>
-</plist>
-`
+/** The old way, a launchd agent (before 1.2.0): macOS may restrict it as a separate background item. */
+const OLD_LABEL = 'com.claudebridge.device'
+
+/** The running agent's process id, from its lock file, or 0 where none runs. */
+async function runningAgent($: Engine, h: string): Promise<number> {
+  const pid = Number(String(await $.fs.read(`${h}/.config/claude-bridge/device.lock`).catch(() => '')).trim())
+  if (!pid) return 0
+  const alive = await $.process.run(['/bin/ps', '-o', 'comm=', '-p', String(pid)]).catch(() => undefined)
+  return alive?.exitCode === 0 && alive.stdout.includes('claude-bridge-device') ? pid : 0
 }
 
 /**
- * Installs the device agent as a launchd agent, or updates it. Once per load of the plugin:
- * writes where to connect, builds the program if its source changed, and (re)starts it.
+ * Keeps the device agent running, started from inside Claude (so macOS counts it as Claude's,
+ * with Claude's permissions) rather than by launchd. Each session checks now and every 30 s: the
+ * agent lives on after the session that started it, until Claude itself quits (device.swift),
+ * and only one runs per computer.
  */
 export async function ensureDeviceAgent($: Engine): Promise<void> {
   if (rt.deviceAgentChecked) return
   rt.deviceAgentChecked = true
+  await keepAgentRunning($)
+  rt.agentTimer?.cancel()
+  rt.agentTimer = $.clock.every(30_000, () => void keepAgentRunning($))
+}
+
+async function keepAgentRunning($: Engine): Promise<void> {
   try {
     const h = await home($)
     await deviceId($)
     if ((await computerSetting($, 'chatUrl')) !== chatBase()) await setComputerSetting($, 'chatUrl', chatBase())
+    await retireLaunchAgent($, h)
 
     const { path: binary, rebuilt } = await ensureBinary($, 'device')
-    const plistPath = `${h}/Library/LaunchAgents/${LABEL}.plist`
-    const wanted = plist(binary, `${h}/Library/Logs/claude-bridge-device.log`)
-    const uid = (await $.process.run(['id', '-u'])).stdout.trim()
-    const target = `gui/${uid}/${LABEL}`
-    const loaded = (await $.process.run(['launchctl', 'print', target]).catch(() => ({ exitCode: 1 }))).exitCode === 0
-    if (String(await $.fs.read(plistPath).catch(() => '')) !== wanted) {
-      await $.process.run(['mkdir', '-p', `${h}/Library/LaunchAgents`])
-      await $.fs.write(plistPath, wanted)
-      if (loaded) await $.process.run(['launchctl', 'bootout', target]).catch(() => undefined)
-      await $.process.run(['launchctl', 'bootstrap', `gui/${uid}`, plistPath])
-      await note($, 'device agent installed')
-    } else if (!loaded) {
-      await $.process.run(['launchctl', 'bootstrap', `gui/${uid}`, plistPath])
-      await note($, 'device agent started')
-    } else if (rebuilt) {
-      await $.process.run(['launchctl', 'kickstart', '-k', target])
-      await note($, 'device agent restarted on its new build')
+    const running = await runningAgent($, h)
+    if (running && !rebuilt) return
+    if (running) {
+      // A new build: the old agent makes way for it.
+      await $.process.run(['kill', String(running)]).catch(() => undefined)
+      await $.clock.sleep(500)
     }
+    // Started from this session's shell, so it is Claude's; it detaches itself (setsid) and
+    // watches the Claude app (or this session) to end with it.
+    const log = `${h}/Library/Logs/claude-bridge-device.log`
+    const started = await $.process.run([
+      '/bin/sh',
+      '-c',
+      'session=$PPID; nohup "$0" --watch-pid "$session" >> "$1" 2>&1 < /dev/null &',
+      binary,
+      log,
+    ])
+    await note($, started.exitCode === 0 ? `device agent started${rebuilt ? ' (new build)' : ''}` : `device agent didn’t start: ${started.stderr.slice(0, 200)}`)
   } catch (error) {
-    rt.deviceAgentChecked = false
     await note($, `device agent: ${errorText(error)}`)
   }
+}
+
+/** Removes the launchd agent earlier versions installed, once, so no separate background item stays. */
+async function retireLaunchAgent($: Engine, h: string): Promise<void> {
+  const plist = `${h}/Library/LaunchAgents/${OLD_LABEL}.plist`
+  if (!(await $.fs.stat(plist).catch(() => undefined))) return
+  const uid = (await $.process.run(['id', '-u'])).stdout.trim()
+  await $.process.run(['launchctl', 'bootout', `gui/${uid}/${OLD_LABEL}`]).catch(() => undefined)
+  await $.process.run(['rm', '-f', plist]).catch(() => undefined)
+  await note($, 'removed the old launchd agent')
 }
 
 /** A setting for this whole computer, kept in config.json where the device agent reads it too. */
@@ -106,6 +117,8 @@ export async function setComputerSetting($: Engine, name: string, value: unknown
 /** Stops the device agent (Claude Bridge turned off); the next ensureDeviceAgent starts it again. */
 export async function stopDeviceAgent($: Engine): Promise<void> {
   rt.deviceAgentChecked = false
-  const uid = (await $.process.run(['id', '-u'])).stdout.trim()
-  await $.process.run(['launchctl', 'bootout', `gui/${uid}/${LABEL}`]).catch(() => undefined)
+  rt.agentTimer?.cancel()
+  rt.agentTimer = undefined
+  const running = await runningAgent($, await home($))
+  if (running) await $.process.run(['kill', String(running)]).catch(() => undefined)
 }

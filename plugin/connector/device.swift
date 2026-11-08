@@ -13,7 +13,12 @@
 //   fork_session    a side chat: a new session with a copy of another's whole conversation
 //   screenshot      the screen, for show_screen with no session open
 //
-// launchd runs it (~/Library/LaunchAgents/com.claudebridge.device.plist, installed by the plugin).
+// A Claude Code session starts it (the plugin's device.ts), never launchd: so macOS counts it as
+// part of Claude, and Claude's permissions are its permissions. It then lives on its own:
+//   - one per computer: it holds ~/.config/claude-bridge/device.lock, and a second copy exits;
+//   - in a process group of its own, so the session that started it can end without it;
+//   - only while Claude runs: it watches the Claude desktop app (or, from a terminal, the session
+//     that started it) and exits with it. The next session starts it again.
 // It reads ~/.config/claude-bridge/{key, device.json, config.json} on every connect.
 
 import Foundation
@@ -624,6 +629,61 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--call" {
   let out = handle(CommandLine.arguments[2], args)
   if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) { print(String(decoding: data, as: UTF8.self)) }
   exit(0)
+}
+
+var ownerWatch: DispatchSourceTimer?
+
+// MARK: - Living inside Claude
+
+/// Holds the computer's one lock for as long as this process lives; false where another copy has it.
+func takeTheLock() -> Bool {
+  try? FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
+  let fd = open("\(configDir)/device.lock", O_CREAT | O_RDWR, 0o600)
+  guard fd >= 0, flock(fd, LOCK_EX | LOCK_NB) == 0 else { return false }
+  let pid = "\(getpid())\n"
+  ftruncate(fd, 0)
+  _ = pid.withCString { write(fd, $0, strlen($0)) }
+  return true  // the descriptor stays open, and the lock held, until the process ends
+}
+
+func parentOf(_ pid: pid_t) -> pid_t {
+  let out = run("/bin/ps", ["-o", "ppid=", "-p", "\(pid)"], timeout: 5).out
+  return pid_t(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+}
+
+func commandOf(_ pid: pid_t) -> String {
+  run("/bin/ps", ["-o", "comm=", "-p", "\(pid)"], timeout: 5).out.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// What to live as long as: the Claude desktop app above the session that started this, else
+/// that session itself (a terminal).
+func ownerToWatch(from session: pid_t) -> pid_t {
+  var pid = session
+  for _ in 0..<8 {
+    guard pid > 1 else { break }
+    if commandOf(pid).hasSuffix("/Claude.app/Contents/MacOS/Claude") { return pid }
+    pid = parentOf(pid)
+  }
+  return session
+}
+
+let arguments = CommandLine.arguments
+guard takeTheLock() else { exit(0) }  // this computer's agent is already running
+// Out of the starting session's process group, so it can end without taking this along.
+_ = setsid()
+if let at = arguments.firstIndex(of: "--watch-pid"), at + 1 < arguments.count, let session = pid_t(arguments[at + 1]) {
+  let owner = ownerToWatch(from: session)
+  log("living as long as process \(owner) (\(commandOf(owner)))")
+  let watch = DispatchSource.makeTimerSource(queue: .global())
+  watch.schedule(deadline: .now() + 5, repeating: 5)
+  watch.setEventHandler {
+    if kill(owner, 0) != 0 && errno == ESRCH {
+      log("Claude has quit; stopping")
+      exit(0)
+    }
+  }
+  watch.resume()
+  ownerWatch = watch
 }
 
 log("starting, device \(deviceId())")

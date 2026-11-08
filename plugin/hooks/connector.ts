@@ -101,7 +101,7 @@ export async function connectorUrl(key: string): Promise<string> {
 /**
  * Puts one of the plugin's Swift programs (the session connector, `connector.swift`, or the
  * device agent, `device.swift`) where this computer runs it: `~/.config/claude-bridge/bin/`, a
- * path that stays put when the plugin updates (launchd points at it).
+ * path that stays put when the plugin updates.
  *
  * The plugin carries both prebuilt (universal, in `connector/prebuilt/`, each stamped with the
  * SHA-256 of its source), so a computer needs no Xcode: the matching one is copied into place and

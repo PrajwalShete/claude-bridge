@@ -59,10 +59,21 @@ A Cloudflare Worker.
 
 ## Device agent (`plugin/connector/device.swift`)
 
-A small native program per computer, run by launchd
-(`~/Library/LaunchAgents/com.claudebridge.device.plist`, installed and updated by the plugin).
-It keeps the computer reachable while no session is open, and answers what only the computer
-knows:
+A small native program per computer, started from inside Claude, never by launchd:
+- **A session starts it,** so macOS counts it as part of Claude and Claude's permissions are its
+  own. Its responsible process is Claude Code's.
+- **One copy per computer:** it holds `~/.config/claude-bridge/device.lock`, and a second copy
+  exits.
+- **It outlives the session that started it,** in a process group of its own.
+- **It lives as long as Claude does:** it watches the Claude desktop app (or, from a terminal,
+  the session that started it) and quits with it.
+
+Each session checks every 30 s that it runs. The next session after a quit starts it again, and
+a new build of it replaces the running one. A launchd agent from earlier versions is removed,
+since a managed Mac may block one as a separate background item.
+
+While Claude runs, it keeps the computer reachable with no session open, and answers what only
+the computer knows:
 
 | Call | Does |
 | --- | --- |
@@ -251,6 +262,6 @@ disconnects everything.
   box, and the app is told to have the person press Enter. It is never reported as sent.
 - A repeat of the same message within 20 s is not sent twice.
 - A new message is refused while Claude Code waits on a question.
-- A crashed connector is restarted; launchd keeps the device agent running.
+- A crashed connector is restarted; every session checks every 30 s that the device agent runs.
 - Sessions starting together build the Swift programs into separate files and move them into
   place, so they never overwrite each other's build.

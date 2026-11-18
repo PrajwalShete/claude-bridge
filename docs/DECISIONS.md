@@ -2,6 +2,17 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-18: nothing is cut
+
+1. **No message is ever shortened**, anywhere between Claude Code and the Claude app: not in the
+   plugin, the connector, the relay's storage or its results.
+2. **Too much for one result is split, not cut:** whole messages up to about 50,000 characters
+   per result (40,000 for catch_up's exchanges); the rest wait for the next call, and a single
+   message larger than that still goes whole.
+3. **Developing runs from the repository (mod mode).** The desktop app always prefers a copy
+   saved to the Claude account over a local one, so while developing none is kept there:
+   `CLAUDE_CODE_PLUGIN_DIRS` points at `plugin/`, and each session reloads it when a turn ends.
+
 ## 2026-11-09: the background service is back, and Auto falls back
 
 1. **On Macs that allow it, the device agent is a launchd background service again** (as in

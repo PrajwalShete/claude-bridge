@@ -134,7 +134,9 @@ export function changesOf(uses: readonly ToolUseSummary[]): string[] {
     }
   }
   if (reads) out.push(`read ${reads} file${reads === 1 ? '' : 's'}`)
-  return [...new Set(out)].slice(0, 14)
+  const all = [...new Set(out)]
+  // A long list of actions is summed up, never dropped without a word.
+  return all.length > 14 ? [...all.slice(0, 13), `and ${all.length - 13} more`] : all
 }
 
 export async function changesOfLastTurn($: Engine): Promise<string[]> {

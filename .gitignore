@@ -7,3 +7,4 @@ node_modules/
 plugin/connector/bin/
 # Written by Claude Code when it loads the plugin
 plugin/.claude-plugin/types/
+dist/

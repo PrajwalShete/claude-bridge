@@ -209,7 +209,8 @@ export async function send($: Engine, messages: Record<string, unknown>[]): Prom
   }
   const news = messages.filter(m => m.type === 'event')
   inside.unsent.push(...news)
-  if (inside.unsent.length > 20) inside.unsent.splice(0, inside.unsent.length - 20)
+  // News waits whole until the relay is back; only a very long outage lets the oldest go.
+  if (inside.unsent.length > 500) inside.unsent.splice(0, inside.unsent.length - 500)
   return false
 }
 

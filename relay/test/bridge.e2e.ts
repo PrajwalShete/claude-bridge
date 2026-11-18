@@ -117,7 +117,7 @@ function deviceAgent(id: string, name: string, projects: Array<{ name: string; f
 const opened: any[] = [];
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
-check(/^1\.4\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+check(/^1\.6\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
 const tools = (await rpc("tools/list")).result.tools.map((t: any) => t.name);
 const expected = ["list_sessions", "list_projects", "start_session", "resume_session", "fork_session", "rename_session", "link_computer", "rename_device", "watch_sessions", "wait_for_updates", "send_message", "answer_question", "catch_up", "ask", "stop_session", "show_screen"];
 check(tools.length === expected.length && expected.every((t) => tools.includes(t)), `the tools: ${tools.join(", ")}`);
@@ -319,6 +319,25 @@ ok = await sdp.post("/pause", { paused: false });
 await Bun.sleep(400);
 r = await call("list_sessions");
 check(ok.ok === true && !r.includes("is paused") && !r.includes("news while paused") && r.includes("Claude Bridge v4"), "any session resumes it, and news from the pause wasn't kept");
+
+// Nothing is ever cut: a long reply arrives whole, and a batch too big for one result arrives
+// whole over several calls.
+await call("wait_for_updates", { seconds: 5 });
+const long = (tag: string, n: number) => `${tag} begins. ${"All of this must arrive. ".repeat(Math.ceil(n / 25)).slice(0, n)} ${tag} ends here.`;
+await sdp.post("/event", { kind: "finished", text: long("REPLY-A", 12_000), task: long("TASK-A", 3_000), forApp: true });
+await Bun.sleep(300);
+r = await call("wait_for_updates", { seconds: 5 });
+check(r.includes("REPLY-A ends here.") && r.includes(long("REPLY-A", 12_000)) && r.includes("TASK-A ends here."), "a 12,000-character reply and its request arrive whole");
+for (const tag of ["B1", "B2", "B3", "B4"]) await sdp.post("/event", { kind: "finished", text: long(tag, 20_000), forApp: true });
+await sdp.post("/event", { kind: "answer", ask: "x1", question: long("Q", 1_000), text: long("ANSWER", 9_000), forApp: true });
+await Bun.sleep(400);
+const first = await call("wait_for_updates", { seconds: 5 });
+const second = await call("wait_for_updates", { seconds: 5 });
+const third = (first + second).includes("ANSWER ends here.") ? "" : await call("wait_for_updates", { seconds: 5 });
+const got = first + second + third;
+check(first.includes("more update") && first.includes("waiting, whole"), "a batch too big for one result says the rest is waiting");
+check(["B1", "B2", "B3", "B4"].every((t) => got.split(`${t} ends here.`).length === 2 && got.includes(long(t, 20_000))), "every long reply arrives whole, exactly once, over the calls");
+check(got.includes(long("ANSWER", 9_000)) && got.includes("Q ends here."), "a long answer and its question arrive whole");
 
 for (const c of [nav, sdp, ...opened]) c.p.kill();
 mac.close();

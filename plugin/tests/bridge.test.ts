@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { exchangesOf, filesTouched } from '../hooks/catchup'
+import { exchangesOf, filesTouched, wholeExchanges } from '../hooks/catchup'
 import { changesOf } from '../hooks/claude'
 import { toolResult } from '../hooks/inside'
 import { cleanPrompt, isPersonPrompt } from '../hooks/state'
@@ -172,4 +172,15 @@ test('the Helper programs setting shows in Settings, with a note when connected 
   expect(await ui.find({ key: 'helpers' })).toBeDefined()
   expect(await ui.find({ text: /Connected from inside Claude/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('catch_up gives every message and reply whole, never cut', () => {
+  const long = (tag: string, n: number) => `${tag} begins. ${'All of it. '.repeat(n / 11)}${tag} ends.`
+  const x = (tag: string, n: number) => ({ from: 'computer' as const, message: long(`ASK-${tag}`, 2_000), reply: long(`REPLY-${tag}`, n), changes: [] })
+  const out = wholeExchanges([x('1', 9_000), x('2', 20_000), x('3', 12_000)])
+  // Each one whole; the oldest left out, whole, once the newer ones pass the budget.
+  expect(out.map(e => e.reply)).toEqual([long('REPLY-2', 20_000), long('REPLY-3', 12_000)])
+  expect(out.at(-1)?.message).toBe(long('ASK-3', 2_000))
+  // A single exchange larger than the budget still comes whole.
+  expect(wholeExchanges([x('big', 60_000)])[0]?.reply).toBe(long('REPLY-big', 60_000))
 })

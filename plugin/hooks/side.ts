@@ -76,7 +76,7 @@ export async function sideFinished($: Engine, agentId: string, answer: string, r
   const seconds = Math.round(((await $.clock.now()) - open.startedAt) / 1000)
   await note($, `ask with tools: fork ${agentId} ended (${reason}) after ${seconds} s`)
   const text = answer || (reason === 'answer' ? 'The side session ended without an answer.' : `The side session ended early (${reason}).`)
-  await sendEvent($, { kind: 'answer', ask: agentId, question: short(open.question, 300), text, forApp: true })
+  await sendEvent($, { kind: 'answer', ask: agentId, question: open.question, text, forApp: true })
   void reportState($)
   return true
 }

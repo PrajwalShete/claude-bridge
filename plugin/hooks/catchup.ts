@@ -63,20 +63,31 @@ export function filesTouched(messages: readonly SessionMessage[], limit = 15): s
   return seen
 }
 
+/**
+ * The newest exchanges with every message and reply whole, never cut. Past `budget` characters
+ * older exchanges are left out, whole, rather than any being shortened; the newest always stays.
+ */
+export function wholeExchanges(recent: readonly Exchange[], budget = 40_000): Array<{ from: string; message: string; reply: string; changes?: string[] }> {
+  const out: Array<{ from: string; message: string; reply: string; changes?: string[] }> = []
+  let size = 0
+  for (const x of [...recent].reverse()) {
+    const one = { from: x.from, message: x.message, reply: x.reply || '(no reply yet)', ...(x.changes.length ? { changes: x.changes } : {}) }
+    const length = one.message.length + one.reply.length
+    if (out.length > 0 && size + length > budget) break
+    out.unshift(one)
+    size += length
+  }
+  return out
+}
+
 export async function catchUp($: Engine, args: Record<string, unknown>): Promise<Result> {
   const want = Math.min(10, Math.max(1, Math.round(Number(args.exchanges ?? 6)) || 6))
   const root = await $.session.root()
   const messages = await $.session.messages()
   const sent = new Set((await read($, log)).filter(e => e.kind === 'app').map(e => short(e.text, 400)))
-  const exchanges = exchangesOf(messages, text => sent.has(short(text, 400)))
-    .slice(-want)
-    .map((x, i, all) => ({
-      from: x.from,
-      message: short(x.message, 500),
-      // The newest reply whole enough to carry on from; earlier ones shorter.
-      reply: x.reply ? short(x.reply, i === all.length - 1 ? 2500 : 700) : '(no reply yet)',
-      ...(x.changes.length ? { changes: x.changes } : {}),
-    }))
+  const recent = exchangesOf(messages, text => sent.has(short(text, 400))).slice(-want)
+  const exchanges = wholeExchanges(recent)
+  const leftOut = recent.length - exchanges.length
   const brief = await currentBrief($)
   const now = await $.clock.now()
   const files = filesTouched(messages).map(path => (path.startsWith(`${root}/`) ? path.slice(root.length + 1) : baseName(path) ?? path))
@@ -86,7 +97,7 @@ export async function catchUp($: Engine, args: Record<string, unknown>): Promise
     ...(brief ? { brief: brief.text, briefUpdated: `${ago(now - brief.updated)} ago` } : { brief: 'No briefing yet: the session has no finished turn.' }),
     exchanges,
     ...(files.length ? { filesTouched: files } : {}),
-    note: 'exchanges are oldest first; "from" says whether the person typed the message on the computer or sent it from the Claude app.',
+    note: `exchanges are oldest first, each message and reply complete; "from" says whether the person typed the message on the computer or sent it from the Claude app.${leftOut ? ` ${leftOut} earlier exchange${leftOut === 1 ? ' was' : 's were'} left out for length (the newer ones are long): use ask to reach ${leftOut === 1 ? 'it' : 'them'}.` : ''}`,
   }
   return withPictures($, result)
 }

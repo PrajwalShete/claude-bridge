@@ -58,7 +58,10 @@ install, no Xcode (the two small helper programs ship prebuilt for Apple silicon
 
 To run it from this repository instead, while developing, point Claude Code at the folder in
 `~/.claude/settings.json`: `{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-bridge/plugin" } }`.
-A copy loaded that way takes precedence over the synced one of the same name.
+A copy loaded that way takes precedence over the synced one of the same name in the CLI. The
+desktop app always prefers a copy saved to the Claude account, so while developing, don't keep
+one there: uninstall it, and desktop sessions run `plugin/` from the repository, reloading after
+each change.
 
 Set your relay in the plugin's options (`relayUrl`, and `chatUrl` if sessions should connect
 through a different hostname).

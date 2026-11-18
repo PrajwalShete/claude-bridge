@@ -232,6 +232,8 @@ final class BridgeClient: NSObject, URLSessionWebSocketDelegate {
     var request = URLRequest(url: url)
     request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
     let socket = urlSession.webSocketTask(with: request)
+    // Messages from the Claude app are never cut: take up to 16 MB (the default is 1 MiB).
+    socket.maximumMessageSize = 16 * 1024 * 1024
     task?.cancel(with: .goingAway, reason: nil)
     task = socket
     socket.resume()
@@ -371,7 +373,8 @@ final class BridgeClient: NSObject, URLSessionWebSocketDelegate {
       send(message, on: task)
     } else {
       unsent.append(message)
-      if unsent.count > 20 { unsent.removeFirst(unsent.count - 20) }
+      // News waits whole until the relay is back; only a very long outage lets the oldest go.
+      if unsent.count > 500 { unsent.removeFirst(unsent.count - 500) }
     }
   }
 

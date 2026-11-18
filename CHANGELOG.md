@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.0 (2026-11-18)
+
+- **Nothing is ever cut.** Replies, answers, questions and the request they answer reach the
+  Claude app whole: the relay no longer cuts them (it cut at 1,500 and 4,000 characters), and
+  catch_up gives every message and reply complete (it cut at 700 and 2,500).
+- A batch of news too big for one result comes over several calls, whole messages only.
+- Each piece of news is kept on its own in the relay; unheard news waits a week.
+- While the relay is out of reach, 500 pieces of news wait to be sent, not 20.
+- The voice assistant is told to pass on each session's message in full.
+- The plugin's log says which folder it loaded from.
+
 ## 1.5.0 (2026-11-09)
 
 - **The background service is back** where macOS allows it: the device agent runs as a launchd

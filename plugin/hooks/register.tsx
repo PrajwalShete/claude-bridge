@@ -266,7 +266,7 @@ export const register: Register = (on, config) => {
     rt.runsIn = (await $.env.get('CLAUDE_CODE_ENTRYPOINT').catch(() => undefined)) === 'claude-desktop' ? 'desktop' : 'terminal'
     const terminal = await $.env.get('TERM_PROGRAM').catch(() => undefined)
     rt.terminalApp = terminal === 'iTerm.app' ? 'iTerm' : terminal === 'Apple_Terminal' ? 'Terminal' : ''
-    await note($, 'loaded')
+    await note($, `loaded from ${$.plugin.root}`)
     rt.connector = undefined
     // A desktop side chat is a copy of another session; the app marks the point it was forked at.
     const history = await $.session.messages().catch(() => [])
@@ -414,12 +414,13 @@ export const register: Register = (on, config) => {
         isWorking: true,
         turnId: e.turnId,
         startedAt: now,
-        task: text ? short(text, 160) : current.task,
+        task: text || current.task,
         tools: [],
       }))
       rt.ticker?.cancel()
       rt.ticker = $.clock.every(1000, () => void update($, tick, n => n + 1))
-      const task = text ? short(text, 160) : undefined
+      // The request whole: nothing that goes to the Claude app is cut.
+      const task = text || undefined
       void reportState($)
       void sendEvent($, { kind: 'started', ...(task ? { text: task } : {}), ...appTurn() })
     }

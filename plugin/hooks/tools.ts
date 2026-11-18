@@ -3,7 +3,7 @@
 // answer_question return at once, and what Claude Code does next reaches the app as news
 // (register.tsx sends it; the relay's feed hands it on).
 
-import { catchUp } from './catchup'
+import { catchUp, readSession } from './catchup'
 import { sendMessage, stopClaude } from './claude'
 import { type Picture, captureScreen } from './images'
 import { ask } from './side'
@@ -27,7 +27,9 @@ export async function answerTool($: Engine, event: Extract<ConnectorEvent, { t: 
 async function runTool($: Engine, name: string, args: Record<string, unknown>): Promise<Result> {
   switch (name) {
     case 'send_message':
-      return sendMessage($, String(args.text ?? ''), args.mode === 'draft' ? 'draft' : 'send')
+      return sendMessage($, String(args.text ?? ''), args.mode === 'draft' ? 'draft' : 'send', args.again === true)
+    case 'read_session':
+      return readSession($, args)
     case 'answer_question': {
       const answered = await answerFromApp($, args)
       if (answered.status !== 'answered') return answered

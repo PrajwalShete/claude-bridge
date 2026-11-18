@@ -81,6 +81,9 @@ declare module 'claude-code' {
       paneShown: boolean
       /** Counts seconds while Claude Code works, so its timer redraws. */
       tick: number
+      /** The app's messages waiting to join a turn, and those the running turn carries: kept in
+       * the session's state so a plugin reload between a send and its turn keeps the "for the app" mark. */
+      turnMarks: { entering: string[]; turnEntries: string[] }
     }
   }
 }

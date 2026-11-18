@@ -10,13 +10,14 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import { changesOfLastTurn, describeTool } from './claude'
+import { changesOfLastTurn, describeTool, loadTurnMarks, saveTurnMarks } from './claude'
 import { type Picture, prepareImage } from './images'
-import { refreshBrief, sideFinished } from './side'
+import { sideFinished } from './side'
+import { transcriptPath } from './transcript'
 import { type EventPicture, KEY_PATTERN, bridgeKey, helperSetting, post, reportState, sendEvent, setWatched, startConnector, stopConnector } from './connector'
 import { computerSetting, removeBackgroundService, setComputerSetting } from './device'
 import { startNewAccount, switchToLinking } from './link'
-import { answerOnScreen, askThroughApp, pick, sendPicks } from './questions'
+import { PERMISSION, answerOnScreen, askThroughApp, pick, sendPicks } from './questions'
 import {
   type Engine,
   INITIAL_CLAUDE,
@@ -258,7 +259,9 @@ export const register: Register = (on, config) => {
   on('session.start', async ($, e, next) => {
     // The device agent's own short run that starts a new session (device.swift): no bridge in it.
     if (await $.env.get('CLAUDE_BRIDGE_BOOTSTRAP').catch(() => undefined)) return next(e)
-    rt.traceFile = `/tmp/claude-bridge-${(await $.session.id()).slice(0, 8)}.log`
+    // Logs, sockets and pictures go in this user's own temporary folder, not the shared /tmp.
+    rt.tmp = ((await $.env.get('TMPDIR').catch(() => undefined)) ?? '/tmp').replace(/\/+$/, '')
+    rt.traceFile = `${rt.tmp}/claude-bridge-${(await $.session.id()).slice(0, 8)}.log`
     // Where this session runs, so a side chat forked from it opens in the same place.
     const kept = (await $.store.get(`setting:${await $.session.id()}`)) as { model?: string; effort?: string } | undefined
     rt.model = kept?.model ?? ''
@@ -268,12 +271,24 @@ export const register: Register = (on, config) => {
     rt.terminalApp = terminal === 'iTerm.app' ? 'iTerm' : terminal === 'Apple_Terminal' ? 'Terminal' : ''
     await note($, `loaded from ${$.plugin.root}`)
     rt.connector = undefined
-    // A desktop side chat is a copy of another session; the app marks the point it was forked at.
-    const history = await $.session.messages().catch(() => [])
-    const forkNote = history.find(m => m.role === 'user' && FORK_NOTE.test(m.text))
-    rt.isSide = !!forkNote
-    rt.parent = forkNote?.text.match(PARENT)?.[1] ?? ''
-    if (forkNote) void keepForkedSetting($, forkNote.text)
+    // The app's messages waiting for or riding in a turn, kept across reloads.
+    await loadTurnMarks($)
+    // A side chat is a copy of another session; its first prompt says so. Once found it is kept in
+    // the store: a long side chat's first prompt falls out of the newest 4,096 rows the API returns.
+    const sideKey = `side:${await $.session.id()}`
+    const knownSide = (await $.store.get(sideKey)) as { parent: string } | undefined
+    let forkText = ''
+    if (!knownSide) {
+      const history = await $.session.messages().catch(() => [])
+      forkText = history.find(m => m.role === 'user' && FORK_NOTE.test(m.text))?.text ?? ''
+      if (!forkText) forkText = await forkNoteFromFile($)
+    }
+    rt.isSide = !!knownSide || !!forkText
+    rt.parent = knownSide?.parent ?? forkText.match(PARENT)?.[1] ?? ''
+    if (forkText) {
+      await $.store.set(sideKey, { parent: rt.parent })
+      void keepForkedSetting($, forkText)
+    }
     await update($, question, () => null)
       await $.command
       .register({ name: 'bridge', description: 'Claude Bridge: let the Claude app reach this session', argumentHint: '[on|off|key <key from another computer>]' })
@@ -407,6 +422,9 @@ export const register: Register = (on, config) => {
       // their submit resolves (joinTurn in claude.ts).
       rt.turnEntries = rt.entering
       rt.entering = []
+      await saveTurnMarks($)
+      // Keep the Mac awake through a turn the app asked for: the person may be away from it.
+      if (rt.turnEntries.length > 0 && !rt.awake) void keepAwake($)
       rt.shared = []
       for (const id of rt.turnEntries) await setStatus($, id, 'working')
       await update($, claude, current => ({
@@ -450,7 +468,10 @@ export const register: Register = (on, config) => {
       }))
       const status = e.reason === 'answer' ? 'done' : e.reason === 'aborted' ? 'stopped' : 'failed'
       for (const id of rt.turnEntries) await setStatus($, id, status)
-      if (e.reason === 'aborted') rt.stopStands = true
+      // After the person's own interrupt Claude Code drops plugin prompts, so the app's next message
+      // waits in the prompt box; after the app's own stop (stop_session) it goes as normal.
+      if (e.reason === 'aborted' && !rt.appStopped) rt.stopStands = true
+      rt.appStopped = false
       if (forApp) {
         if (e.reason === 'answer') await addLog($, { kind: 'reply', text: answer })
         else await addLog($, { kind: 'event', text: e.reason === 'aborted' ? 'Claude Code was stopped' : 'Claude Code hit a problem' })
@@ -458,15 +479,19 @@ export const register: Register = (on, config) => {
       // The Claude app's feed: the reply, what changed and any pictures, or that it didn't finish.
       const about = { ...appTurn(), ...(task ? { task } : {}) }
       rt.turnEntries = []
+      await saveTurnMarks($)
+      void letSleep($)
       void reportState($)
+      // A turn the app neither asked for nor watches goes to the relay thin: that it happened (for
+      // the inbox's unheard count), never what was said; read_session reads it from here if asked.
       void sendEvent(
         $,
-        e.reason === 'answer'
-          ? { kind: 'finished', text: answer, changes, ...about, ...picturesOf(rt.shared) }
-          : { kind: e.reason === 'aborted' ? 'stopped' : 'failed', ...about },
+        !forApp && !watched
+          ? { kind: e.reason === 'answer' ? 'finished' : e.reason === 'aborted' ? 'stopped' : 'failed', thin: true }
+          : e.reason === 'answer'
+            ? { kind: 'finished', text: answer, changes, ...about, ...picturesOf(rt.shared) }
+            : { kind: e.reason === 'aborted' ? 'stopped' : 'failed', ...about },
       )
-      // Keep the Claude app's briefing current while it watches this session.
-      if (watched || forApp) void refreshBrief($)
     }
     return next(e)
   })
@@ -479,6 +504,45 @@ export const register: Register = (on, config) => {
     const answers = await askThroughApp($, e, questions => void sendEvent($, { kind: 'question', questions, ...appTurn() }))
     if (!answers) return next(e)
     return { result: { questions: e.questions, answers } }
+  }).catch(($, e, next) => next(e))
+
+  // Claude Code's permission prompts go to the Claude app as questions (Allow / Deny), in a turn it
+  // asked for or while it watches: answered by voice or in the panel, for this one call only. With
+  // no answer, Claude Code's own dialog asks as before.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    if (!bridgeUp()) return next(e)
+    const linked = await read($, link)
+    if (linked.paused || (rt.turnEntries.length === 0 && !linked.watched)) return next(e)
+    const ask = {
+      question: `Claude Code wants to use ${e.tool_name}: ${JSON.stringify(e.tool_input)}. Allow it this once?`,
+      header: PERMISSION,
+      multiSelect: false,
+      options: [{ label: 'Allow' }, { label: 'Deny' }],
+    }
+    const answers = await askThroughApp($, { tool_use_id: `permission-${await $.clock.now()}`, questions: [ask] }, questions =>
+      void sendEvent($, { kind: 'question', permission: true, questions, ...appTurn() }),
+    )
+    if (!answers) return next(e)
+    return answers[ask.question] === 'Allow'
+      ? { decision: { behavior: 'allow' as const } }
+      : { decision: { behavior: 'deny' as const, message: 'The person said no, from the Claude app.' } }
+  }).catch(($, e, next) => next(e))
+
+  // Anything else Claude Code waits on at its screen becomes news, so the app can tell stuck from working.
+  on('classic.Notification', async ($, e, next) => {
+    if (bridgeUp() && e.notification_type !== 'idle_prompt') {
+      const linked = await read($, link)
+      if (!linked.paused && (rt.turnEntries.length > 0 || linked.watched)) {
+        void sendEvent($, { kind: 'waiting', text: e.message, ...appTurn() })
+      }
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The session's folder moved (`/cd`, a worktree, the desktop app's move): the relay hears it at once.
+  on('classic.CwdChanged', async ($, e, next) => {
+    if (bridgeUp()) void reportState($)
+    return next(e)
   }).catch(($, e, next) => next(e))
 
   // What Claude Code is doing, for status.
@@ -510,4 +574,37 @@ export const register: Register = (on, config) => {
     if (e.surface === 'terminal') return terminalView($.ui.resolve(e), model, actionsFor($))
     return panelView($.ui.resolve(e), model, actionsFor($), e.surface)
   })
+}
+
+/** A side chat's note from the start of its transcript file, for one longer than the API's reach. */
+async function forkNoteFromFile($: Engine): Promise<string> {
+  try {
+    const head = String(await $.fs.read(await transcriptPath($), { offset: 0, length: 2_000_000 }))
+    for (const line of head.split('\n')) {
+      if (!line.includes('"type":"user"')) continue
+      const row = JSON.parse(line) as { message?: { content?: unknown } }
+      const c = row.message?.content
+      const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map(b => (b as { text?: string }).text ?? '').join('\n') : ''
+      if (FORK_NOTE.test(text)) return text
+      return ''
+    }
+  } catch {
+    // no transcript yet
+  }
+  return ''
+}
+
+/** Starts `caffeinate -i` (idle sleep only, at most four hours) and remembers its process id. */
+async function keepAwake($: Engine): Promise<void> {
+  const r = await $.process.run(['/bin/sh', '-c', '/usr/bin/caffeinate -i -t 14400 >/dev/null 2>&1 & echo $!']).catch(() => undefined)
+  const pid = r?.stdout.trim() ?? ''
+  if (/^\d+$/.test(pid)) rt.awake = pid
+}
+
+/** Ends the `caffeinate` this plugin started, by its own process id, never by name. */
+async function letSleep($: Engine): Promise<void> {
+  if (!rt.awake) return
+  const pid = rt.awake
+  rt.awake = ''
+  await $.process.run(['/bin/kill', pid]).catch(() => undefined)
 }

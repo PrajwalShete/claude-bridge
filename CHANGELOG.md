@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.7.0 (2026-11-19)
+
+From the architecture review (`docs/REVIEW-2026-11-18.md`).
+
+- **`read_session`**: a session's transcript itself, whole, no model: what you haven't heard, the
+  last N, or a search; long results come in pages and a huge message continues across pages, so
+  nothing is ever cut. Each message says who sent it (computer, Claude app, voice, Remote Control,
+  another session), from Claude Code's own `origin`.
+- **`catch_up` is the complete summary** for taking over a session: written once from the whole
+  session, kept (it survives reloads), and updated from the new exchanges only, on the session's
+  own model and effort. Nothing runs at turn end any more. It marks the session heard and watches it.
+- **News can't be lost:** updates are numbered and `wait_for_updates` takes `heard`; a wait the
+  app hangs up on (or cancels) ends without taking news. Old news (over 30 minutes) comes as one
+  line per session. The app's own request isn't echoed back. A reply too long for one result
+  points to `read_session`.
+- **The inbox:** `list_sessions` shows `unheard` per session. Turns the app neither asked for nor
+  watches reach the relay thin: that they happened, never what was said.
+- **Permission prompts** go to the app as Allow / Deny questions; other things a session waits on
+  at its screen come as news. The Mac is kept awake through turns the app asked for.
+- **Tools:** `answer` (questions and permissions) and `rename` (sessions and computers) replace
+  four; descriptions and instructions are about half as long.
+- **Link codes need the computer's own secret** (the code is read aloud); `link_computer` lists
+  and removes linked computers.
+- **Fixes:** the app's own stop no longer holds its next message; a reload no longer loses the
+  "for the app" mark; long side chats stay side chats; the panel's type error with Claude Code
+  2.1.326.
+- **Session names:** a session the desktop app moves after it starts (out of its spare folder)
+  reports its new folder, so its project and name follow; headers and lookups by name fetch names
+  again after the relay restarts, instead of showing the project's name.
+- `GET /api/diag` lists the relay's last 200 calls. Logs, sockets and pictures moved to the private
+  temp folder; the key file is created private.
+
 ## 1.6.0 (2026-11-18)
 
 - **Nothing is ever cut.** Replies, answers, questions and the request they answer reach the

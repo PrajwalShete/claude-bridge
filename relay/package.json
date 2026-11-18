@@ -12,5 +12,5 @@
     "typescript": "^7.0.2",
     "wrangler": "^4.149.0"
   },
-  "version": "1.6.0"
+  "version": "1.7.0"
 }

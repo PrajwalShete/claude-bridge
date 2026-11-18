@@ -96,7 +96,9 @@ function appMessages(m: ViewModel): Array<{ id: string; text: string; answered: 
     .map(entry => ({ id: entry.id, text: entry.text.trim(), answered: entry.status === 'done', at: entry.at }))
 }
 
-type Ui = Elements['mobile'] & Partial<Pick<Elements['desktop'], 'Select'>>
+/** What the panel draws with: every surface carries these (a newer surface's extra elements, such as
+ * `Shader`, aren't needed here). */
+type Ui = Pick<Elements['mobile'], 'Box' | 'Text' | 'Button' | 'Svg'> & Partial<Pick<Elements['desktop'], 'Select'>>
 
 /** Small line icons beside each row, as the app's own panels have them (16 px, Tabler-style strokes). */
 const ICON = (body: string) =>

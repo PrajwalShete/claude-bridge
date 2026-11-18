@@ -83,8 +83,9 @@ export async function bridgeKey($: Engine, fresh = false, given?: string): Promi
     if (saved) return saved
   }
   const key = given ?? `cbrg_${b64url(crypto.getRandomValues(new Uint8Array(32)))}`
+  // Created private (mode 600) before the key goes in, so it is never readable by others, even briefly.
+  await $.process.run(['/usr/bin/install', '-m', '600', '/dev/null', path]).catch(() => undefined)
   await $.fs.write(path, `${key}\n`)
-  await $.process.run(['chmod', '600', path]).catch(() => undefined)
   return key
 }
 
@@ -239,7 +240,7 @@ export async function startConnector($: Engine): Promise<void> {
       await note($, `no connector program: ${errorText(error)}`)
       return await inside()
     }
-    const socketPath = `/tmp/claude-bridge-${session.slice(0, 8)}.sock`
+    const socketPath = `${rt.tmp}/claude-bridge-${session.slice(0, 8)}.sock`
     let stream: Process['stream']
     try {
       stream = $.process.spawn({
@@ -338,7 +339,11 @@ export async function reportState($: Engine): Promise<void> {
   const model = rt.model || (await $.session.model().catch(() => ''))
   const effort = rt.effort || ((await $.env.get('CLAUDE_EFFORT').catch(() => undefined)) ?? '')
   const task = activity.task && isPersonPrompt(activity.task) ? cleanPrompt(activity.task) : undefined
-  await post($, '/state', { working: activity.isWorking, side: rt.isSide, asking: rt.sideOpen.size, ...(rt.parent ? { parent: rt.parent } : {}), runsIn: rt.runsIn, ...(rt.terminalApp ? { terminalApp: rt.terminalApp } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(task ? { task } : {}) }).catch(
+  // The session's folder can move after it starts (the desktop app moves a session out of the spare
+  // folder it was started in), so it is reported every time, not only at connecting.
+  const folder = await $.session.root().catch(() => '')
+  const project = folder.split('/').filter(Boolean).pop() ?? ''
+  await post($, '/state', { ...(folder ? { folder, project } : {}), working: activity.isWorking, side: rt.isSide, asking: rt.sideOpen.size, ...(rt.parent ? { parent: rt.parent } : {}), runsIn: rt.runsIn, ...(rt.terminalApp ? { terminalApp: rt.terminalApp } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(task ? { task } : {}) }).catch(
     () => undefined,
   )
 }
@@ -354,7 +359,10 @@ export type EventPicture = { data: string; mimeType: string; caption?: string }
 export type BridgeEvent = { messages?: string[]; forApp?: boolean } & (
   | { kind: 'started'; text?: string }
   | { kind: 'finished'; text: string; task?: string; changes: string[]; pictures?: EventPicture[] }
-  | { kind: 'question'; questions: unknown }
+  | { kind: 'waiting'; text: string; messages?: string[]; forApp?: boolean }
+  /** A turn the app neither asked for nor watches: only that it happened, never what was said. */
+  | { kind: 'finished' | 'stopped' | 'failed'; thin: true }
+  | { kind: 'question'; questions: unknown; permission?: true }
   | { kind: 'stopped' | 'failed'; task?: string }
   | { kind: 'answer'; ask: string; question: string; text: string }
 )

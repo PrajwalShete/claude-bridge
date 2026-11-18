@@ -7,7 +7,7 @@ Parked ideas and decided-but-unbuilt changes.
 - **No active chat** (replaces the parked "active chat changes only when the person says so"):
   every tool names its chat, and the person watches the chats they care about.
 - **Instant send:** no tool waits for Claude Code; replies, questions and side answers come as news.
-- **Fewer, sharper tools:** fourteen became nine.
+- **Fewer, sharper tools:** fourteen became nine, then sixteen as features came; 1.7.0 merged four into two and halved the descriptions.
 - **Messages matched to turns by id**, not by comparing text.
 - **Devices → projects → sessions**: named computers and sessions, starting and resuming
   sessions, and joining more computers ([decisions](DECISIONS.md)).

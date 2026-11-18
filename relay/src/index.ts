@@ -44,6 +44,7 @@ export default {
       m = path.match(LINK_PATH);
       if (m) return link(req, env, m[1]);
       if (path === "/api/status") return status(req, env);
+      if (path === "/api/diag") return diag(req, env);
 
       m = path.match(PICTURE_PATH);
       if (m) return picture(env, m[1], m[2]);
@@ -91,6 +92,13 @@ async function status(req: Request, env: Env): Promise<Response> {
   return json({ id, ...now });
 }
 
+/** GET /api/diag with the key: the hub's last 200 calls (tool, start, how long, how it ended). */
+async function diag(req: Request, env: Env): Promise<Response> {
+  const id = await keyFrom(req);
+  if (!id) return json({ error: "Send the Claude Bridge key as a Bearer token." }, 401);
+  return json({ calls: await env.HUBS.get(env.HUBS.idFromName(id)).diag() });
+}
+
 /** The account a polling session's credential names, and a linked computer's credential hash for its hub to check. */
 async function peerAccount(req: Request): Promise<{ id: string; device: string | null } | null> {
   const auth = req.headers.get("Authorization");
@@ -126,13 +134,19 @@ async function peerAnswer(req: Request, env: Env): Promise<Response> {
 /**
  * /link/<code>: POST offers the code (a new computer, before anyone approves it); GET waits up to
  * 25 s for the person to approve it from the Claude app, and answers the computer's credential
- * once, or `{ pending: true }`. A code lasts ten minutes.
+ * once, or `{ pending: true }`. A code lasts ten minutes. Both carry the computer's own secret
+ * (`X-Link-Secret`): the code is read aloud, so only the computer that offered it can collect.
  */
 async function link(req: Request, env: Env, code: string): Promise<Response> {
   if (!LINK_CODE.test(code)) return text("Not a link code.", 400);
   const pairing = env.HUBS.get(env.HUBS.idFromName(`link:${code}`));
-  if (req.method === "POST") return json(await pairing.linkOffer());
-  if (req.method === "GET") return json(await pairing.linkWait());
+  const secret = req.headers.get("X-Link-Secret") ?? "";
+  const secretHash = /^[A-Za-z0-9_-]{32,128}$/.test(secret) ? await sha256Hex(secret) : null;
+  if (req.method === "POST") {
+    const out = await pairing.linkOffer(secretHash);
+    return json(out, "error" in out ? 409 : 200);
+  }
+  if (req.method === "GET") return json(await pairing.linkWait(secretHash));
   return text("Use POST to offer a code, GET to wait for it.", 405);
 }
 

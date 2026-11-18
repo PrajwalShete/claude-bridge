@@ -102,21 +102,21 @@ question, an answer) comes back as news.
 
 | Tool | What it does |
 | --- | --- |
-| `list_sessions` | The open sessions by computer: name, project, what each is doing, which are watched. |
+| `list_sessions` | The open sessions by computer: name, project, what each is doing, which are watched, how many replies you haven't heard. |
 | `list_projects` | A computer's projects (folders), most recent first. |
-| `start_session` | Starts a new session in a project, named, optionally with its first message; it opens in the desktop app. |
+| `read_session` | The transcript itself, whole, no model: what you haven't heard, the last N, or a search; long results in pages, nothing cut. |
+| `catch_up` | The complete summary of a session for taking it over: goal, everything done, decisions and why, where it stands, what is open. Kept and updated from new exchanges only. |
+| `ask` | One question about a session, quoting its own words; checked with tools only when needed. |
+| `send_message` | Sends a request to a session; returns at once with the message's id. A repeat within two minutes isn't sent twice. |
+| `answer` | Answers a session's question, or allows or denies one permission request. |
+| `wait_for_updates` | Waits for news and returns it the moment it happens; `heard` confirms what arrived. |
+| `watch_sessions` | Chooses the sessions whose every move reaches the Claude app. |
+| `stop_session` | Interrupts a session. |
+| `start_session` | Starts a new session in a project, named, optionally with its first message. |
 | `resume_session` | A project's 15 most recent sessions, numbered; then opens the one picked by number. |
 | `fork_session` | Starts a side chat from a session: its whole conversation, a different task, the original undisturbed; both watched. |
-| `rename_session` | Renames a session (open, or by number from the list); kept in its transcript. |
-| `link_computer` | Links another computer to your account, from the code its panel shows. |
-| `rename_device` | Renames a computer. |
-| `watch_sessions` | Chooses the sessions whose every move reaches the Claude app. |
-| `wait_for_updates` | Waits for news and returns it the moment it happens. |
-| `send_message` | Sends a request to a session; returns at once with the message's id. |
-| `answer_question` | Answers a question Claude Code asked. |
-| `catch_up` | Everything needed to carry on with a session: goal, what it did, status now, its last exchanges, decisions, files touched, open questions. |
-| `ask` | One exact detail (an error, a URL, a list), quoted from the session's own words; checked with tools only when needed. |
-| `stop_session` | Interrupts a session. |
+| `rename` | Renames a session (open, or by number from the list) or a computer. |
+| `link_computer` | Links another computer from the code its panel shows; lists or removes linked computers. |
 | `show_screen` | A screenshot of a computer's screen, with a private link. |
 
 ## In the terminal (the Claude Code CLI)

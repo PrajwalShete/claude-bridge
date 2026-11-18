@@ -150,7 +150,8 @@ A Claude Code plugin of function hooks.
 | `device.ts` | This computer's id, its settings, and installing and updating the device agent. |
 | `tools.ts` | The session tools the Claude app calls, each answered at once. |
 | `claude.ts` | Submitting prompts reliably, and reading what Claude Code did and is doing. |
-| `catchup.ts` | `catch_up`: status, brief, exchanges, files touched. |
+| `catchup.ts` | `read_session` (pages of the transcript) and `catch_up` (status, the complete summary, files touched). |
+| `transcript.ts` | Reads the session's transcript file: exchanges labelled by `origin`, compaction and interrupts skipped, pages that never cut a message. |
 | `side.ts` | `ask`, and the session's brief. |
 | `questions.ts` | Claude Code's questions answered from the app or the panel. |
 | `images.ts` | Screenshots and pictures Claude Code shares. |

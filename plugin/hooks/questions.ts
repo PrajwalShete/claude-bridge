@@ -9,6 +9,9 @@ import { post } from './connector'
 import { type Engine, PANE, addLog, bridgeUp, errorText, note, rt, short, NO_QUESTION } from './state'
 import type { BridgeQuestion, PendingQuestion } from '../types'
 
+/** The header that marks a permission request put to the app as a question. */
+export const PERMISSION = 'Permission'
+
 const question = atom({ plugin: 'codebridge', key: 'question' } as const, NO_QUESTION)
 
 type Result = Record<string, unknown>
@@ -93,7 +96,11 @@ export async function answerFromApp($: Engine, args: Record<string, unknown>): P
     await post($, '/answer', { id: pending.id, value: { onScreen: true } satisfies Answer })
     return { status: 'The question is on screen now.' }
   }
-  const answers = Array.isArray(args.answers) ? args.answers.map(a => String(a).trim()) : []
+  // A permission request is a question with two options: `allow` answers it.
+  const answers =
+    typeof args.allow === 'boolean' && pending.questions.length === 1 && pending.questions[0]!.header === PERMISSION
+      ? [args.allow ? 'Allow' : 'Deny']
+      : Array.isArray(args.answers) ? args.answers.map(a => String(a).trim()) : []
   if (answers.length < pending.questions.length || answers.some(a => !a)) {
     const n = pending.questions.length
     return { error: `Claude Code asked ${n} question${n === 1 ? '' : 's'}; give an answer for each, in order.` }

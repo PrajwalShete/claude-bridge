@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { exchangesOf, filesTouched, wholeExchanges } from '../hooks/catchup'
+import { filesTouched } from '../hooks/catchup'
+import { decodeCursor, exchangesFrom, page } from '../hooks/transcript'
 import { changesOf } from '../hooks/claude'
 import { toolResult } from '../hooks/inside'
 import { cleanPrompt, isPersonPrompt } from '../hooks/state'
@@ -117,25 +118,47 @@ test('prompts are shown without the notes the app wraps around them', () => {
   expect(cleanPrompt('  fix   the\nbug ')).toBe('fix the bug')
 })
 
-test('catch_up reads exchanges from the transcript, typed or sent from the app, skipping notices', () => {
-  const use = (tool: string, input: Record<string, unknown>) => ({ tool, input }) as never
-  const messages = [
-    { role: 'user', text: 'fix the header', toolUses: [] },
-    { role: 'assistant', text: 'Looking.', toolUses: [use('Edit', { file_path: '/p/src/Header.tsx' })] },
-    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 'x', text: 'ok' }] },
-    { role: 'assistant', text: 'Fixed the header.', toolUses: [] },
-    { role: 'user', text: '[Subagent hand-back] report', toolUses: [] },
-    { role: 'assistant', text: 'Noted.', toolUses: [] },
-    { role: 'user', text: '<system-reminder>x</system-reminder>deploy it', toolUses: [] },
-    { role: 'assistant', text: 'Deployed.', toolUses: [use('Write', { file_path: '/p/notes.md' })] },
-  ] as never
-  const out = exchangesOf(messages, text => text === 'deploy it')
+test('the transcript gives exchanges labelled by origin, skipping compaction, interrupts and tool results', () => {
+  const row = (o: Record<string, unknown>) => JSON.stringify(o)
+  const text = [
+    row({ type: 'user', uuid: 'u1', timestamp: '2026-11-19T10:00:00Z', origin: { kind: 'human' }, message: { content: 'fix the header' } }),
+    row({ type: 'assistant', timestamp: '2026-11-19T10:00:05Z', message: { content: [{ type: 'text', text: 'Looking.' }, { type: 'tool_use', name: 'Edit', input: { file_path: '/p/src/Header.tsx' } }] } }),
+    row({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } }),
+    row({ type: 'assistant', timestamp: '2026-11-19T10:00:09Z', message: { content: [{ type: 'text', text: 'Fixed the header.' }] } }),
+    row({ type: 'user', origin: { kind: 'human' }, message: { content: '[Request interrupted by user]' } }),
+    row({ type: 'system', subtype: 'compact_boundary' }),
+    row({ type: 'user', isCompactSummary: true, message: { content: 'This session is being continued from a previous conversation...' } }),
+    row({ type: 'user', uuid: 'u2', timestamp: '2026-11-19T11:00:00Z', origin: { kind: 'plugin', name: 'codebridge', asUser: true }, message: { content: 'deploy it' } }),
+    row({ type: 'assistant', timestamp: '2026-11-19T11:00:30Z', message: { content: [{ type: 'text', text: 'Deployed.' }] } }),
+  ].join('\n')
+  const out = exchangesFrom(text)
   expect(out.map(x => [x.from, x.message, x.reply])).toEqual([
-    ['computer', 'fix the header', 'Noted.'],
+    ['computer', 'fix the header', 'Fixed the header.'],
     ['Claude app', 'deploy it', 'Deployed.'],
   ])
   expect(out[0]!.changes).toEqual(['edited Header.tsx'])
-  expect(filesTouched(messages)).toEqual(['/p/notes.md', '/p/src/Header.tsx'])
+  expect(out[1]!.afterCompaction).toBe(true)
+})
+
+test('read_session pages never cut a message: an oversized one continues exactly where it stopped', () => {
+  const long = (tag: string, n: number) => `${tag} begins. ${'All of it. '.repeat(Math.ceil(n / 11)).slice(0, n)} ${tag} ends.`
+  const x = (id: string, n: number) => ({ id, from: 'computer', at: '', message: `ask ${id}`, reply: long(id, n), changes: [], finishedAt: 't' })
+  const selection = [x('a', 3_000), x('b', 25_000)]
+  const first = page(selection, 10_000)
+  expect((first.items[0] as { reply: string }).reply).toBe(long('a', 3_000))
+  expect(first.next).toBeDefined()
+  // Follow the pages to the end and put b's reply back together.
+  let reply = ''
+  let next = first.next
+  let pages = 0
+  while (next && pages++ < 10) {
+    const c = decodeCursor(next)!
+    const from = selection.findIndex(e => e.id === c.s)
+    const p = page(selection.slice(from), 10_000, c.o)
+    for (const item of p.items as Array<{ reply?: string }>) reply += item.reply ?? ''
+    next = p.next
+  }
+  expect(reply).toBe(long('b', 25_000))
 })
 
 test('notices are not the person speaking: hand-backs, fork notes, the bridge side-chat note', () => {
@@ -174,13 +197,3 @@ test('the Helper programs setting shows in Settings, with a note when connected 
   await ui.unmount()
 })
 
-test('catch_up gives every message and reply whole, never cut', () => {
-  const long = (tag: string, n: number) => `${tag} begins. ${'All of it. '.repeat(n / 11)}${tag} ends.`
-  const x = (tag: string, n: number) => ({ from: 'computer' as const, message: long(`ASK-${tag}`, 2_000), reply: long(`REPLY-${tag}`, n), changes: [] })
-  const out = wholeExchanges([x('1', 9_000), x('2', 20_000), x('3', 12_000)])
-  // Each one whole; the oldest left out, whole, once the newer ones pass the budget.
-  expect(out.map(e => e.reply)).toEqual([long('REPLY-2', 20_000), long('REPLY-3', 12_000)])
-  expect(out.at(-1)?.message).toBe(long('ASK-3', 2_000))
-  // A single exchange larger than the budget still comes whole.
-  expect(wholeExchanges([x('big', 60_000)])[0]?.reply).toBe(long('REPLY-big', 60_000))
-})

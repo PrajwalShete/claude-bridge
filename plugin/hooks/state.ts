@@ -43,9 +43,15 @@ export const rt = {
   turnEntries: [] as string[],
   /** The running main-loop turn and when it started; undefined between turns. */
   turn: undefined as { id: string; startedAt: number } | undefined,
-  lastSentText: { text: '', at: 0 },
+  /** The app's last message and its id: the same text again within two minutes is a repeat. */
+  lastSentText: { text: '', at: 0, id: '' },
   /** After the person interrupts, Claude Code drops plugin prompts until they type one. */
   stopStands: false,
+  /** The Claude app stopped the turn (stop_session): its next message is sent as normal, unlike after
+   * the person's own interrupt, which Claude Code follows by dropping plugin prompts. */
+  appStopped: false,
+  /** The `caffeinate` this plugin started to keep the Mac awake through a turn the app asked for. */
+  awake: '' as string,
   ticker: undefined as Timer | undefined,
   /** Pictures Claude Code shared (share_image) in its latest turn: they go with its reply. */
   shared: [] as Picture[],
@@ -62,11 +68,9 @@ export const rt = {
    * side chat forked from it runs on the same. */
   model: '' as string,
   effort: '' as string,
-  /** A briefing on the session for catch_up, refreshed after the turns the Claude app may catch up on. */
-  brief: { text: '', at: 0 },
-  /** The brief being made right now, which a second caller waits on. */
-  briefRun: undefined as Promise<void> | undefined,
   traceFile: '/tmp/claude-bridge.log',
+  /** This user's own temporary folder ($TMPDIR, private on macOS), for logs, sockets and pictures. */
+  tmp: '/tmp',
   /** This computer's id, once read. */
   deviceId: '' as string,
   /** When Make a new key was first pressed, for its confirming second press. */
@@ -97,7 +101,8 @@ export function bridgeUp(): boolean {
 
 const trace: string[] = []
 
-/** A short trace of what the bridge did, for diagnosis: /tmp/claude-bridge-<session id>.log, one per session. */
+/** A short trace of what the bridge did, for diagnosis: claude-bridge-<session id>.log in this user's own
+ * temporary folder ($TMPDIR), one per session. */
 export async function note($: Engine, line: string): Promise<void> {
   const at = new Date(await $.clock.now()).toISOString().slice(11, 23)
   trace.push(`${at} ${line}`)

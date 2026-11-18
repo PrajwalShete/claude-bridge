@@ -1,8 +1,8 @@
 // Pictures for the Claude app: a screenshot of the computer's screen, or an image Claude Code
 // chose to share. Each is made a JPEG no wider or taller than 1280 px, small enough for the
-// relay's 1 MiB message limit with room for the reply beside it.
+// relay's message limit (Cloudflare takes 32 MiB, the connector 16 MiB) with plenty of room, and quick to send.
 
-import { type Engine, baseName } from './state'
+import { type Engine, baseName, rt } from './state'
 
 export type Picture = { data: string; mimeType: string; caption?: string }
 
@@ -12,7 +12,7 @@ const MAX_BASE64 = 450_000
 const IMAGE_TYPES = /\.(png|jpe?g|gif|heic|heif|webp|tiff?|bmp)$/i
 
 async function tempPath($: Engine, ext: string): Promise<string> {
-  return `/tmp/claude-bridge-${(await $.clock.now()).toString(36)}-${Math.random().toString(36).slice(2, 6)}.${ext}`
+  return `${rt.tmp}/claude-bridge-${(await $.clock.now()).toString(36)}-${Math.random().toString(36).slice(2, 6)}.${ext}`
 }
 
 /** Converts any image macOS reads to a small JPEG, lowering the quality until it fits. */

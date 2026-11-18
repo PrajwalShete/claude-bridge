@@ -1,7 +1,7 @@
 // Claude Code's side: submitting the app's messages as prompts, and reading what Claude Code
 // did (its replies, what it changed, what it is doing now).
 
-import { atom, read } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import type { ToolUseSummary } from 'claude-code'
 
 import { type Engine, addLog, ago, baseName, errorText, note, rt, setStatus, short, INITIAL_CLAUDE, NO_QUESTION } from './state'
@@ -16,7 +16,7 @@ type Result = Record<string, unknown>
  * `queued` (Claude Code is busy), with the message's id; its reply comes as an event. A refused
  * prompt is left in the prompt box (`not sent`).
  */
-export async function sendMessage($: Engine, raw: string, mode: 'send' | 'draft'): Promise<Result> {
+export async function sendMessage($: Engine, raw: string, mode: 'send' | 'draft', again = false): Promise<Result> {
   const text = raw.trim()
   if (!text) return { error: 'There was nothing to send.' }
   if (mode === 'draft') return holdInBox($, text, 'Put in the prompt box as asked', 'drafted')
@@ -28,16 +28,18 @@ export async function sendMessage($: Engine, raw: string, mode: 'send' | 'draft'
     }
   }
   const now = await $.clock.now()
-  if (text.toLowerCase() === rt.lastSentText.text.toLowerCase() && now - rt.lastSentText.at < 20_000) {
-    return { status: 'already sent', note: 'That exact message went to this session seconds ago; it was not sent again.' }
+  // A repeat (a retried call whose first result was lost) returns the first message, not a second send.
+  if (!again && text.toLowerCase() === rt.lastSentText.text.toLowerCase() && now - rt.lastSentText.at < 120_000) {
+    return { status: 'already sent', message: rt.lastSentText.id, note: 'That exact message went to this session within the last two minutes; it was not sent again. Pass again: true to send it once more.' }
   }
-  rt.lastSentText = { text, at: now }
+  rt.lastSentText = { text, at: now, id: '' }
 
   const { isWorking } = await read($, claude)
   if (rt.askFirst) return holdInBox($, text, 'This session is set to ask the person first')
   if (rt.stopStands) return holdInBox($, text, 'The person stopped Claude Code a moment ago')
 
   const id = await addLog($, { kind: 'app', text, status: isWorking ? 'queued' : 'sending' })
+  rt.lastSentText.id = id
   const sentAt = await $.clock.now()
 
   // The submit resolves as its turn starts, which is when the message joins that turn, or at
@@ -75,11 +77,13 @@ async function joinTurn($: Engine, id: string, sentAt: number): Promise<void> {
   const turn = rt.turn
   if (turn && turn.startedAt >= sentAt) {
     if (!rt.turnEntries.includes(id)) rt.turnEntries.push(id)
+    await saveTurnMarks($)
     await setStatus($, id, 'working')
     await note($, `message ${id} joined turn ${turn.id}`)
   } else {
     // Its turn.start hasn't run yet: that turn takes it.
     rt.entering.push(id)
+    await saveTurnMarks($)
   }
 }
 
@@ -173,6 +177,7 @@ export async function claudeStatus($: Engine): Promise<Result> {
 export async function stopClaude($: Engine): Promise<Result> {
   const { isWorking, turnId } = await read($, claude)
   if (!isWorking || !turnId) return { status: 'Claude Code was not working on anything.' }
+  rt.appStopped = true
   await $.turn.abort({ turnId })
   await addLog($, { kind: 'event', text: 'Stopped by the Claude app' })
   return { status: 'stopped' }
@@ -211,4 +216,18 @@ export function describeTool(tool: string, input: unknown): string {
     default:
       return `using ${tool.replace(/^mcp__/, '').replace(/__/g, ' ')}`
   }
+}
+
+const turnMarks = atom({ plugin: 'codebridge', key: 'turnMarks' } as const, { entering: [] as string[], turnEntries: [] as string[] })
+
+/** Keeps which app messages wait for, or ride in, a turn in the session's state (survives a reload). */
+export async function saveTurnMarks($: Engine): Promise<void> {
+  await update($, turnMarks, () => ({ entering: [...rt.entering], turnEntries: [...rt.turnEntries] }))
+}
+
+/** Puts them back after a reload. */
+export async function loadTurnMarks($: Engine): Promise<void> {
+  const kept = await read($, turnMarks)
+  rt.entering = [...kept.entering]
+  rt.turnEntries = [...kept.turnEntries]
 }

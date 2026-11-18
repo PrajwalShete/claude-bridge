@@ -31,6 +31,12 @@ export async function handleMcp(req: Request, env: Env, id: string, origin: stri
   }
   const messages = (Array.isArray(body) ? body : [body]) as RpcRequest[];
   const requests = messages.filter((m) => m && typeof m.method === "string" && m.id !== undefined && m.id !== null);
+  // The app gave up on a call: a wait it was holding is dropped without marking news heard.
+  for (const m of messages) {
+    if (m?.method === "notifications/cancelled" && m.params?.requestId !== undefined) {
+      await env.HUBS.get(env.HUBS.idFromName(id)).cancelWait(`${id}:${String(m.params.requestId)}`);
+    }
+  }
 
   const version = req.headers.get("MCP-Protocol-Version");
   if (version && !SUPPORTED_VERSIONS.includes(version) && !requests.some((r) => r.method === "initialize")) {
@@ -40,7 +46,7 @@ export async function handleMcp(req: Request, env: Env, id: string, origin: stri
 
   const hub = env.HUBS.get(env.HUBS.idFromName(id));
   const pictureBase = `${origin}/p/${id}`;
-  const responses = await Promise.all(requests.map((r) => handleRequest(r, hub, pictureBase, id)));
+  const responses = await Promise.all(requests.map((r) => handleRequest(r, hub, pictureBase, id, req.signal)));
   return json(Array.isArray(body) ? responses : responses[0], 200, { "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id" });
 }
 
@@ -50,12 +56,12 @@ let versionCache: string | undefined;
 async function serverVersion(): Promise<string> {
   if (!versionCache) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ TOOLS, INSTRUCTIONS })));
-    versionCache = `1.6.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    versionCache = `1.7.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
   }
   return versionCache;
 }
 
-async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>, pictureBase: string, id: string) {
+async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>, pictureBase: string, id: string, signal: AbortSignal) {
   const ok = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
   const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id: msg.id, error: { code, message } });
   switch (msg.method) {
@@ -85,39 +91,57 @@ async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>,
       if (await hub.isPaused()) {
         return ok(
           errorResult(
-            "Claude Bridge is paused on the person's computer, so nothing can be read, sent, started or opened. Tell the person; they turn it back on with the Bridge dot below the prompt in any Claude Code session (it can't be turned on from here).",
+            "Claude Bridge is paused on the person's computer, so nothing can be read, sent, started or opened. Tell the person; they turn it back on in the Claude Bridge panel of any Claude Code session (it can't be turned on from here).",
           ),
         );
       }
       const timeout = LONG_TOOLS.has(tool) ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS;
-      switch (tool) {
-        case "list_sessions":
-          return ok(await hub.listSessions(pictureBase));
-        case "list_projects":
-          return ok(await hub.listProjects(args.device, pictureBase));
-        case "start_session":
-          return ok(await hub.startSession(args, timeout, pictureBase));
-        case "resume_session":
-          return ok(await hub.resumeSession(args, pictureBase));
-        case "fork_session":
-          return ok(await hub.forkSession(args, timeout, pictureBase));
-        case "rename_session":
-          return ok(await hub.renameSession(args, pictureBase));
-        case "link_computer":
-          return ok(await hub.linkComputer(args.code, args.name, id));
-        case "rename_device":
-          return ok(await hub.renameDevice(args));
-        case "watch_sessions":
-          return ok(await hub.watchSessions(args.sessions, args.mode));
-        case "wait_for_updates":
-          return ok(await hub.waitForUpdates(args.seconds, pictureBase));
-        case "show_screen":
-          return ok(await hub.showScreen(args, pictureBase));
-        default:
-          return ok(await hub.call(tool, args, timeout, pictureBase));
+      const started = Date.now();
+      const diagId = await hub.diagStart(tool);
+      // The app hung up (Cloudflare tells us when it can: `enable_request_signal`): a held wait ends
+      // without marking news heard.
+      const waitId = `${id}:${String(msg.id)}`;
+      const onAbort = () => void hub.cancelWait(waitId).catch(() => undefined);
+      if (tool === "wait_for_updates") signal?.addEventListener("abort", onAbort);
+      try {
+        const out = await dispatch(tool, args, timeout, waitId);
+        await hub.diagEnd(diagId, signal?.aborted ? "caller left" : out.isError ? "error" : "answered", Date.now() - started).catch(() => undefined);
+        return ok(out);
+      } catch (err) {
+        await hub.diagEnd(diagId, `failed: ${String(err).slice(0, 200)}`, Date.now() - started).catch(() => undefined);
+        throw err;
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
       }
     }
     default:
       return fail(-32601, `Method not found: ${msg.method}`);
+  }
+
+  async function dispatch(tool: string, args: Record<string, unknown>, timeout: number, waitId: string) {
+      switch (tool) {
+        case "list_sessions":
+          return (await hub.listSessions(pictureBase));
+        case "list_projects":
+          return (await hub.listProjects(args.device, pictureBase));
+        case "start_session":
+          return (await hub.startSession(args, timeout, pictureBase));
+        case "resume_session":
+          return (await hub.resumeSession(args, pictureBase));
+        case "fork_session":
+          return (await hub.forkSession(args, timeout, pictureBase));
+        case "rename":
+          return (await hub.rename(args, pictureBase));
+        case "link_computer":
+          return (await hub.linkComputer(args.code, args.name, id, args.remove));
+        case "watch_sessions":
+          return (await hub.watchSessions(args.sessions, args.mode));
+        case "wait_for_updates":
+          return (await hub.waitForUpdates(args.seconds, pictureBase, args.heard, waitId));
+        case "show_screen":
+          return (await hub.showScreen(args, pictureBase));
+        default:
+          return await hub.call(tool === "answer" ? "answer_question" : tool, args, timeout, pictureBase);
+      }
   }
 }

@@ -10,43 +10,14 @@ import type { SessionMessage } from 'claude-code'
 
 import { changesOf, claudeStatus } from './claude'
 import type { Picture } from './images'
-import { currentBrief } from './side'
+import { currentSummary } from './side'
+import { type Exchange, decodeCursor, page, readTail } from './transcript'
 import { type Engine, ago, baseName, cleanPrompt, isPersonPrompt, rt, short, INITIAL_CLAUDE, INITIAL_LOG } from './state'
 
 const claude = atom({ plugin: 'codebridge', key: 'claude' } as const, INITIAL_CLAUDE)
 const log = atom({ plugin: 'codebridge', key: 'log' } as const, INITIAL_LOG)
 
 type Result = Record<string, unknown>
-
-export type Exchange = { from: 'Claude app' | 'computer'; message: string; reply: string; changes: string[] }
-
-/**
- * The transcript as the person's messages, each with Claude Code's final reply to it and what
- * it changed. `fromApp` tells the app's messages apart from ones typed on the computer.
- */
-export function exchangesOf(messages: readonly SessionMessage[], fromApp: (text: string) => boolean): Exchange[] {
-  const out: Exchange[] = []
-  let current: { message: string; replies: string[]; uses: SessionMessage['toolUses'][number][] } | undefined
-  const close = () => {
-    if (!current) return
-    const reply = current.replies.at(-1) ?? ''
-    out.push({ from: fromApp(current.message) ? 'Claude app' : 'computer', message: current.message, reply, changes: changesOf(current.uses) })
-  }
-  for (const m of messages) {
-    if (m.role === 'user') {
-      if (m.toolResults?.length || !isPersonPrompt(m.text)) continue
-      const text = cleanPrompt(m.text)
-      if (!text) continue
-      close()
-      current = { message: text, replies: [], uses: [] }
-    } else if (current) {
-      if (m.text.trim()) current.replies.push(m.text.trim())
-      current.uses.push(...m.toolUses)
-    }
-  }
-  close()
-  return out
-}
 
 /** Files the session edited or wrote, most recent first, by name. */
 export function filesTouched(messages: readonly SessionMessage[], limit = 15): string[] {
@@ -63,41 +34,70 @@ export function filesTouched(messages: readonly SessionMessage[], limit = 15): s
   return seen
 }
 
+/** What read_session returns per page by default, and at most; a page never cuts a message, and
+ * stays well under the Claude app's ~150,000-character limit per result. */
+const PAGE_DEFAULT = 20_000
+const PAGE_MAX = 120_000
+
 /**
- * The newest exchanges with every message and reply whole, never cut. Past `budget` characters
- * older exchanges are left out, whole, rather than any being shortened; the newest always stays.
+ * read_session: the transcript itself, whole, no model. With `next`: the next page. With `find`:
+ * exchanges containing that text. With `last`: the last N. Otherwise what the app hasn't heard
+ * (exchanges finished after `since`, which the relay passes), else the last one.
  */
-export function wholeExchanges(recent: readonly Exchange[], budget = 40_000): Array<{ from: string; message: string; reply: string; changes?: string[] }> {
-  const out: Array<{ from: string; message: string; reply: string; changes?: string[] }> = []
-  let size = 0
-  for (const x of [...recent].reverse()) {
-    const one = { from: x.from, message: x.message, reply: x.reply || '(no reply yet)', ...(x.changes.length ? { changes: x.changes } : {}) }
-    const length = one.message.length + one.reply.length
-    if (out.length > 0 && size + length > budget) break
-    out.unshift(one)
-    size += length
+export async function readSession($: Engine, args: Record<string, unknown>): Promise<Result> {
+  const budget = Math.min(PAGE_MAX, Math.max(2_000, Number(args.budget) || PAGE_DEFAULT))
+  const cursor = typeof args.next === 'string' && args.next ? decodeCursor(args.next) : undefined
+  if (args.next && !cursor) return { error: 'That `next` value is not one read_session gave.' }
+  const find = cursor?.f ?? (typeof args.find === 'string' && args.find.trim() ? args.find.trim() : undefined)
+  const last = Math.min(50, Math.max(1, Math.round(Number(args.last)) || 0))
+  const since = Number(args.since) || 0
+  const whole = !!cursor || !!find
+  const { exchanges: all } = await readTail($, whole ? Number.POSITIVE_INFINITY : Math.max(last, 20))
+  let selection: Exchange[]
+  if (cursor) {
+    const from = all.findIndex(x => x.id === cursor.s)
+    const to = all.findIndex(x => x.id === cursor.e)
+    if (from < 0 || to < 0) return { error: 'The transcript changed under that page; ask again without `next`.' }
+    selection = all.slice(from, to + 1).filter(x => !find || contains(x, find))
+  } else if (find) {
+    selection = all.filter(x => contains(x, find))
+    if (selection.length === 0) return { exchanges: [], note: `Nothing in this session's transcript contains "${find}".` }
+  } else if (last) {
+    selection = all.slice(-last)
+  } else {
+    const unheard = since ? all.filter(x => x.finishedAt && Date.parse(x.finishedAt) > since) : []
+    selection = unheard.length ? unheard : all.slice(-1)
   }
-  return out
+  if (selection.length === 0) return { exchanges: [], note: 'This session has no messages yet.' }
+  const { items, next } = page(selection, budget, cursor?.o ?? 0, find)
+  return {
+    exchanges: items,
+    ...(next ? { next, note: 'More follows: call read_session with this `next` for the next page. Nothing is cut.' } : {}),
+    from: 'oldest first; "from" says who sent each message (computer, Claude app, voice, Remote Control, another session)',
+  }
 }
 
-export async function catchUp($: Engine, args: Record<string, unknown>): Promise<Result> {
-  const want = Math.min(10, Math.max(1, Math.round(Number(args.exchanges ?? 6)) || 6))
-  const root = await $.session.root()
-  const messages = await $.session.messages()
-  const sent = new Set((await read($, log)).filter(e => e.kind === 'app').map(e => short(e.text, 400)))
-  const recent = exchangesOf(messages, text => sent.has(short(text, 400))).slice(-want)
-  const exchanges = wholeExchanges(recent)
-  const leftOut = recent.length - exchanges.length
-  const brief = await currentBrief($)
-  const now = await $.clock.now()
-  const files = filesTouched(messages).map(path => (path.startsWith(`${root}/`) ? path.slice(root.length + 1) : baseName(path) ?? path))
+const contains = (x: Exchange, text: string) => `${x.message}\n${x.reply}`.toLowerCase().includes(text.toLowerCase())
 
+/**
+ * catch_up: the complete picture of a session for the Claude app's assistant to carry on from: a
+ * full summary, its status now, anything waiting on the person. The summary is kept in the store
+ * (it survives reloads) and brought up to date from the new exchanges only; the first one, or
+ * `depth: "full"`, is written from the whole session.
+ */
+export async function catchUp($: Engine, args: Record<string, unknown>): Promise<Result> {
+  const root = await $.session.root()
+  const summary = await currentSummary($, args.depth === 'full')
+  const got = await $.session.messages({ last: 400 }).catch(() => [] as readonly SessionMessage[])
+  const recent: readonly SessionMessage[] = Array.isArray(got) ? got : []
+  const files = filesTouched(recent).map(path => (path.startsWith(`${root}/`) ? path.slice(root.length + 1) : baseName(path) ?? path))
   const result: Result = {
     now: await claudeStatus($),
-    ...(brief ? { brief: brief.text, briefUpdated: `${ago(now - brief.updated)} ago` } : { brief: 'No briefing yet: the session has no finished turn.' }),
-    exchanges,
+    ...(summary.text
+      ? { summary: summary.text, summaryCovers: summary.covers, summaryMade: summary.how }
+      : { summary: 'No summary could be written yet.', why: summary.how }),
     ...(files.length ? { filesTouched: files } : {}),
-    note: `exchanges are oldest first, each message and reply complete; "from" says whether the person typed the message on the computer or sent it from the Claude app.${leftOut ? ` ${leftOut} earlier exchange${leftOut === 1 ? ' was' : 's were'} left out for length (the newer ones are long): use ask to reach ${leftOut === 1 ? 'it' : 'them'}.` : ''}`,
+    note: 'For any message word for word, call read_session.',
   }
   return withPictures($, result)
 }

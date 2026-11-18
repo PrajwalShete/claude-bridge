@@ -134,3 +134,16 @@ The plugin starts the connector with one JSON object on stdin:
 | `/wait_answer` | `{ id, seconds }` | Long poll: resolves `{ value }` or `{ pending: true }`. |
 | `/ping` | `{}` | `{ connected, watched }`. |
 | `/stop` | `{}` | Exits. |
+
+## Added in 1.7.0
+
+- **Link codes** carry the computer's own secret: `POST /link/<code>` and `GET /link/<code>` both
+  send `X-Link-Secret` (32 to 128 URL-safe characters); the relay keeps only its SHA-256 and hands
+  the credential only to the same secret.
+- **`GET /api/diag`** with the account key: the hub's last 200 tool calls (tool, start, milliseconds
+  held, how it ended).
+- **Events:** `finished`, `stopped` and `failed` may be `thin: true` (no text: a turn the app
+  neither asked for nor watches); `question` may carry `permission: true` (Allow / Deny); new kind
+  `waiting` (`text`: what Claude Code waits on at its screen).
+- **MCP:** `notifications/cancelled` ends the named `wait_for_updates` without marking news heard;
+  so does the app hanging up (`request.signal`).

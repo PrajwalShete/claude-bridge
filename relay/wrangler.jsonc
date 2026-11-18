@@ -3,6 +3,9 @@
   "name": "claude-bridge",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
+  // request.signal fires when the Claude app hangs up on a held call, so the wait ends without
+  // marking news heard.
+  "compatibility_flags": ["enable_request_signal"],
   "workers_dev": false,
   "routes": [
     { "pattern": "claude-bridge.prajwalshete.com", "custom_domain": true },

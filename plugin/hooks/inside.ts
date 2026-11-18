@@ -37,7 +37,7 @@ export type InsideLink = {
   connected: boolean
   /** The latest state message, sent again whenever the relay welcomes this session anew. */
   lastState?: Record<string, unknown>
-  /** News that couldn't go while offline, sent on reconnecting (the latest 20). */
+  /** News that couldn't go while offline, sent on reconnecting (the latest 500). */
   unsent: Record<string, unknown>[]
   failures: number
   /** When the waiting request went out, for noticing one that never comes back. */
@@ -50,7 +50,8 @@ export function toolResult(response: Record<string, unknown>): Record<string, un
   const images = (body._images as Array<{ data?: unknown; mimeType?: unknown }> | undefined) ?? []
   delete body._images
   const isError = body.error !== undefined && body.status === undefined
-  // The relay takes messages up to 1 MiB: images that would overflow it are left out, and the answer says so.
+  // Images are kept well under the relay's message limit (Cloudflare takes 32 MiB, the connector 16 MiB):
+  // any that would overflow it are left out, and the answer says so.
   let room = 960_000
   let dropped = 0
   const kept: Array<Record<string, unknown>> = []

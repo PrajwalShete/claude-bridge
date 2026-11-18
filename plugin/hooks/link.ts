@@ -21,20 +21,33 @@ async function linkFile($: Engine): Promise<string> {
   return `${(await $.env.get('HOME').catch(() => undefined)) ?? '/tmp'}/.config/claude-bridge/link.json`
 }
 
+/** The secret that goes with this computer's code. */
+async function linkSecret($: Engine): Promise<string> {
+  try {
+    return (JSON.parse(String(await $.fs.read(await linkFile($)))) as { secret?: string }).secret ?? ''
+  } catch {
+    return ''
+  }
+}
+
 /** The code this computer offers, the same in every session on it, made anew when it ran out. */
 async function currentCode($: Engine): Promise<string> {
   const path = await linkFile($)
   try {
-    const saved = JSON.parse(String(await $.fs.read(path))) as { code?: string; expires?: number }
-    if (saved.code && (saved.expires ?? 0) > (await $.clock.now()) + 60_000) return saved.code
+    const saved = JSON.parse(String(await $.fs.read(path))) as { code?: string; expires?: number; secret?: string }
+    if (saved.code && saved.secret && (saved.expires ?? 0) > (await $.clock.now()) + 60_000) return saved.code
   } catch {
     // none yet
   }
   const bytes = crypto.getRandomValues(new Uint8Array(12))
   const code = [...bytes].map(b => ALPHABET[b % ALPHABET.length]).join('')
-  const offered = await $.http.fetch(`${relayUrl()}/link/${code}`, { method: 'POST' })
+  // A secret only this computer keeps goes with the code (as in OAuth's device flow): the code is
+  // read aloud, so hearing it must not be enough to collect this computer's credential.
+  const secret = [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('')
+  const offered = await $.http.fetch(`${relayUrl()}/link/${code}`, { method: 'POST', headers: { 'X-Link-Secret': secret } })
   const { expires } = JSON.parse(offered.text) as { expires: number }
-  await $.fs.write(path, JSON.stringify({ code, expires }))
+  await $.process.run(['/usr/bin/install', '-m', '600', '/dev/null', path]).catch(() => undefined)
+  await $.fs.write(path, JSON.stringify({ code, expires, secret }))
   return code
 }
 
@@ -55,7 +68,7 @@ export async function startLinking($: Engine): Promise<void> {
         continue
       }
       await update($, link, s => ({ ...s, linkCode: code }))
-      const waited = await $.http.fetch(`${relayUrl()}/link/${code}`, { method: 'GET' }).catch(() => undefined)
+      const waited = await $.http.fetch(`${relayUrl()}/link/${code}`, { method: 'GET', headers: { 'X-Link-Secret': await linkSecret($) } }).catch(() => undefined)
       if (!waited?.ok) {
         await $.clock.sleep(5_000)
         continue

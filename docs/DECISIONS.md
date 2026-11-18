@@ -2,6 +2,31 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-19: the review's plan
+
+1. **Three planes:** live news (pushed), reads (`read_session`, no model), thinking (`catch_up`,
+   `ask`, a model only when asked).
+2. **`catch_up` is a complete summary, not a short one** (Prajwal): the app's assistant may arrive
+   after half a million tokens and must be able to carry on. Written once from the whole session
+   (a fork), kept in `$.store`, then updated from the new exchanges only with `$.model.complete`
+   on the session's own model and effort (open question 1, option a). `maxTokens` is set to 32,000:
+   its default, 1,024, would cut the summary.
+3. **Who sent a message** comes from the transcript's `origin`, not from matching text.
+4. **News is confirmed** (`heard`), and a wait ends without taking news when the app hangs up
+   (`request.signal`, flag `enable_request_signal`; Cloudflare notes it isn't always detected) or
+   sends `notifications/cancelled`.
+5. **Old news is a pointer**, after 30 minutes (open question 2, as suggested). **The app's own
+   request is named by its id, not echoed** (open question 4).
+6. **`catch_up` watches the session** (open question 5, as suggested).
+7. **Permission prompts are relayed** as Allow / Deny questions, for one call only, never as a
+   standing rule; the local dialog asks when the app doesn't answer (open question 7: all tools,
+   until Prajwal says otherwise).
+8. **Not built yet, each for a reason:** a keep-alive stream on held calls (needs the diagnostic
+   log to show where holds die first, review 9.3 and 9.4); a ping to the phone (`$.ui.notify`
+   reaching the phone is unverified, 9.5); peeking at closed sessions; a per-session level for
+   what voice may send, and watching that lapses (open questions 6 and 11); fork cost reporting;
+   `ask` searching before using a model (read_session's search covers exact text meanwhile).
+
 ## 2026-11-18: nothing is cut
 
 1. **No message is ever shortened**, anywhere between Claude Code and the Claude app: not in the

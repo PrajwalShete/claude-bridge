@@ -47,6 +47,9 @@ export const rt = {
   lastSentText: { text: '', at: 0, id: '' },
   /** The `caffeinate` this plugin started to keep the Mac awake through a turn the app asked for. */
   awake: '' as string,
+  /** Tool calls in the running turn, and when progress was last reported (list_sessions' line). */
+  turnSteps: 0,
+  progressAt: 0,
   ticker: undefined as Timer | undefined,
   /** Pictures Claude Code shared (share_image) in its latest turn: they go with its reply. */
   shared: [] as Picture[],

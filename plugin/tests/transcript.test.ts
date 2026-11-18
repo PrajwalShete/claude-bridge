@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { PIECE, readForward, scanBack } from '../hooks/transcript'
+import { PIECE, exchangesFrom, readForward, scanBack, stepLines } from '../hooks/transcript'
 
 /** A transcript of 400 exchanges, over 10 MB, all multi-byte text, and a reader that behaves as
  * Claude Code's does: bytes as base64, refusing an answer over 4 MiB. */
@@ -61,4 +61,35 @@ test('a page continues by reading only its own bytes, from where it starts', asy
   expect(exchanges.map(x => x.id)).toEqual(all.slice(390).map(x => x.id))
   expect(bytesRead).toBe(bytes.length - from.start)
   expect(exchanges.at(-1)?.reply).toBe(`reply 399 ${words.repeat(400)} end 399`)
+})
+
+test('a running turn reads as steps: messages whole, tool calls as one line, reads grouped, the call going now', () => {
+  const r = (o: Record<string, unknown>) => JSON.stringify(o)
+  const use = (id: string, name: string, input: Record<string, unknown>) => ({ type: 'tool_use', id, name, input })
+  const result = (id: string, error = false) => ({ type: 'tool_result', tool_use_id: id, content: 'long output', is_error: error })
+  const text = [
+    r({ type: 'user', uuid: 'u1', timestamp: '2026-11-19T10:00:00Z', origin: { kind: 'plugin', name: 'codebridge' }, message: { content: 'fix the date bug' } }),
+    r({ type: 'assistant', timestamp: '2026-11-19T10:00:05Z', message: { content: [{ type: 'text', text: "I'm starting on this: looking at how dates are parsed." }, use('a', 'Read', { file_path: '/p/src/date.ts' }), use('b', 'Read', { file_path: '/p/src/parse.ts' })] } }),
+    r({ type: 'user', message: { content: [result('a'), result('b')] } }),
+    r({ type: 'assistant', timestamp: '2026-11-19T10:01:00Z', message: { content: [{ type: 'text', text: 'Found it: the month is off by one. Editing parse.ts now.' }, use('c', 'Edit', { file_path: '/p/src/parse.ts' }), use('d', 'Bash', { command: 'npm test', description: 'Run the tests' })] } }),
+    r({ type: 'user', message: { content: [result('c'), result('d', true)] } }),
+    r({ type: 'assistant', timestamp: '2026-11-19T10:02:00Z', message: { content: [use('e', 'Bash', { command: 'npm test -- --fix', description: 'Run the tests again' })] } }),
+  ].join('\n')
+  const turn = exchangesFrom(text).at(-1)!
+  turn.running = true
+  const { lines, now } = stepLines(turn, Date.parse('2026-11-19T10:05:00Z'))
+  expect(lines).toEqual([
+    "10:00 said: I'm starting on this: looking at how dates are parsed.",
+    '10:00 Read 2 files: date.ts, parse.ts',
+    '10:01 said: Found it: the month is off by one. Editing parse.ts now.',
+    '10:01 Edited parse.ts',
+    '10:01 Ran: Run the tests (failed)',
+  ])
+  expect(now).toBe('Running: Run the tests again (for 3 min so far)')
+  // Finished, its final words are the reply, not a step.
+  const done = exchangesFrom(text + '\n' + r({ type: 'assistant', timestamp: '2026-11-19T10:06:00Z', message: { content: [{ type: 'text', text: 'Fixed; the tests pass.' }] } })).at(-1)!
+  const finished = stepLines(done, 0)
+  expect(finished.now).toBeUndefined()
+  expect(finished.lines.at(-1)).toBe('10:02 Ran: Run the tests again')
+  expect(done.reply).toBe('Fixed; the tests pass.')
 })

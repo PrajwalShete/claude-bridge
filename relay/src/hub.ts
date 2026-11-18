@@ -49,6 +49,8 @@ type Peer = {
   /** Where the session runs, so its side chats open there too; and which terminal app. */
   runsIn?: "desktop" | "terminal";
   terminalApp?: string;
+  /** How far along a running turn is, in a line. */
+  progress?: string;
   /** The model and effort its requests go out with now; its side chats use the same. */
   model?: string;
   effort?: string;
@@ -178,7 +180,7 @@ function ago(ms: number): string {
   return d === 1 ? "yesterday" : `${d} days ago`;
 }
 
-/** "SD Paithani", "sd-paithani" and "SdPaithani" all name the same thing. */
+/** "Shop Front", "shop-front" and "ShopFront" all name the same thing. */
 function squash(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -607,6 +609,7 @@ export class BridgeHub extends DurableObject<Env> {
         ...(moved ? { folder: String(msg.folder).slice(0, 400), project: String(msg.project ?? "").slice(0, 80) || meta.project } : {}),
         working: msg.working === true,
         task: typeof msg.task === "string" ? msg.task : meta.task,
+        progress: msg.working === true && typeof msg.progress === "string" ? msg.progress.slice(0, 500) : undefined,
         side: msg.side === true,
         asking: typeof msg.asking === "number" ? Math.max(0, Math.floor(msg.asking)) : 0,
         ...(typeof msg.parent === "string" && msg.parent ? { parent: msg.parent.slice(0, 64) } : {}),
@@ -786,6 +789,7 @@ export class BridgeHub extends DurableObject<Env> {
       ...(s.model ? { model: s.effort ? `${s.model}, ${s.effort} effort` : s.model } : {}),
       working: s.working === true,
       ...(s.task ? { task: s.task } : {}),
+      ...(s.working && s.progress ? { progress: s.progress } : {}),
       watched: watch.includes(s.session),
       ...(unread ? { unheard: unread } : {}),
       ...(s.lastActive ? { lastActive: ago(Date.now() - s.lastActive) } : {}),

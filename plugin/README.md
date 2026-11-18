@@ -6,11 +6,20 @@ sessions, on every computer linked to your account.
 
 ## Setup
 
+Install it on each computer:
+
+```bash
+claude plugin marketplace add PrajwalShete/claude-bridge
+claude plugin install codebridge@claude-bridge
+```
+
+Or in one step inside Claude Code: `/plugin install codebridge --marketplace PrajwalShete/claude-bridge`
+
 - **First computer:** open the Claude Bridge panel (the small "● Bridge" button below the prompt,
   or `/bridge`), choose **Own account** under Connection, then add the connector URL in the Claude
   app (Settings, Connectors, Add custom connector) and paste the key.
-- **Every other computer:** nothing to install when the plugin is saved to your Claude account.
-  Its panel shows a code; tell the Claude app "link my computer, code …".
+- **Every other computer:** install it there too; its panel shows a code: tell the Claude app
+  "link my computer, code …".
 
 The plugin carries its two small helper programs prebuilt (Apple silicon and Intel), so no Xcode
 is needed. One runs as a background service macOS starts at login, so the computer stays

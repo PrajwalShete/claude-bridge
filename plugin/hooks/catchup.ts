@@ -11,7 +11,7 @@ import type { SessionMessage } from 'claude-code'
 import { changesOf, claudeStatus } from './claude'
 import type { Picture } from './images'
 import { currentSummary } from './side'
-import { type Exchange, decodeCursor, encodeCursor, page, readForward, scanBack, transcriptFile } from './transcript'
+import { type Exchange, decodeCursor, encodeCursor, page, readForward, scanBack, stepLines, transcriptFile } from './transcript'
 import { type Engine, ago, baseName, cleanPrompt, isPersonPrompt, rt, short, INITIAL_CLAUDE, INITIAL_LOG } from './state'
 
 const claude = atom({ plugin: 'codebridge', key: 'claude' } as const, INITIAL_CLAUDE)
@@ -53,13 +53,36 @@ export async function readSession($: Engine, args: Record<string, unknown>): Pro
   const cursor = typeof args.next === 'string' && args.next ? decodeCursor(args.next) : undefined
   if (args.next && !cursor) return { error: 'That `next` value is not one read_session gave.' }
   const find = cursor?.f ?? (typeof args.find === 'string' && args.find.trim() ? args.find.trim() : undefined)
-  const { read, size } = await transcriptFile($)
+  const { read: readFile, size } = await transcriptFile($)
+  const working = (await read($, claude)).isWorking
+  const nowMs = await $.clock.now()
+  const stepsSeenKey = `stepsSeen:${await $.session.id()}`
+
+  // "Anything new?" while it works: only the steps since the app last asked, of the newest turn.
+  if (args.steps === 'new') {
+    const scan = await scanBack(readFile, size, list => list.length >= 1)
+    const turn = scan.exchanges.at(-1)
+    if (!turn) return { note: 'This session has no messages yet.' }
+    if (working) turn.running = true
+    const { lines, now } = stepLines(turn, nowMs)
+    const seen = (await $.store.get(stepsSeenKey)) as { id: string; count: number } | undefined
+    const fresh = seen?.id === turn.id ? lines.slice(seen.count) : lines
+    await $.store.set(stepsSeenKey, { id: turn.id, count: lines.length })
+    return {
+      turn: { from: turn.from, at: turn.at, message: turn.message, ...(turn.running ? { status: 'still running' } : { status: 'finished', reply: turn.reply || '(no reply)' }) },
+      newSteps: fresh,
+      ...(now ? { now } : {}),
+      stepsInAll: lines.length,
+      note: fresh.length ? `${fresh.length} new step${fresh.length === 1 ? '' : 's'} since you last asked.` : 'Nothing new since you last asked.',
+      read: bytes(scan.bytesRead),
+    }
+  }
 
   if (find) {
     // Newest matches first; a page goes back only as far as it takes to fill it.
     const from = cursor ? cursor.e : size
     // A page also stops after SEARCH_SLICE bytes, so one call stays quick on any size of session.
-    const scan = await scanBack(read, from, (list, n) => {
+    const scan = await scanBack(readFile, from, (list, n) => {
       const hits = list.filter(x => contains(x, find))
       return hits.reduce((sum, x) => sum + x.message.length + x.reply.length, 0) > budget || n >= SEARCH_SLICE
     })
@@ -95,13 +118,13 @@ export async function readSession($: Engine, args: Record<string, unknown>): Pro
   let bytesRead = 0
   if (cursor) {
     // The next page of a selection: read only its own bytes.
-    const scan = await readForward(read, cursor.s, Math.min(cursor.e, size))
+    const scan = await readForward(readFile, cursor.s, Math.min(cursor.e, size))
     bytesRead = scan.bytesRead
     selection = scan.exchanges
   } else {
     const last = Math.min(50, Math.max(0, Math.round(Number(args.last)) || 0))
     const since = Number(args.since) || 0
-    const scan = await scanBack(read, size, list =>
+    const scan = await scanBack(readFile, size, list =>
       last ? list.length >= last : since ? list.some(x => x.finishedAt && Date.parse(x.finishedAt) <= since) : list.length >= 1,
     )
     bytesRead = scan.bytesRead
@@ -110,6 +133,11 @@ export async function readSession($: Engine, args: Record<string, unknown>): Pro
     selection = last ? all.slice(-last) : unheard.length ? unheard : all.slice(-1)
   }
   if (selection.length === 0) return { exchanges: [], note: 'This session has no messages yet.' }
+  // The newest exchange is the running turn while the session works: its steps so far come with it.
+  const newest = selection.at(-1)!
+  if (working && newest.end >= size - 1) newest.running = true
+  for (const x of selection) if (x.running || args.steps === 'all') x.view = stepLines(x, nowMs)
+  if (newest.running && newest.view) await $.store.set(stepsSeenKey, { id: newest.id, count: newest.view.lines.length })
   const { items, stop } = page(selection, budget, cursor?.o ?? 0)
   return {
     exchanges: items,

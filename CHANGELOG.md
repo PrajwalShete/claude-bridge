@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.0 (2026-11-19)
+
+- **Installs from GitHub:** this repository is a Claude Code plugin marketplace.
+  `claude plugin marketplace add PrajwalShete/claude-bridge`, then
+  `claude plugin install codebridge@claude-bridge`, on each computer.
+- **How far along is it?** While a session works, `read_session` gives its running turn's steps
+  so far: what Claude Code said on the way, whole; each tool call as one line without its output
+  ("Edited parse.ts", "Ran: the tests (failed)"), reads and searches grouped; and what it is doing
+  right now ("Running: the tests, for 3 min so far"). `steps: "new"` gives only what is new since
+  the app last asked; `steps: "all"` gives the steps of finished turns too. `list_sessions` shows a
+  progress line per working session. Read from the transcript, no model: about 25 ms here.
+- **A running turn is never mistaken for a finished one:** it no longer looks finished after its
+  first reply row, and a `catch_up` update leaves it out until it ends.
+- **The voice assistant talks more like a person:** short spoken sentences, technical words said
+  plainly; every point a session made still told, in its own words.
+
 ## 1.8.0 (2026-11-19)
 
 - **Reports:** when something goes wrong, tell the Claude app to report it. Its assistant writes one

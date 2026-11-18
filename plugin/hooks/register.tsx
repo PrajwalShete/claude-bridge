@@ -425,6 +425,7 @@ export const register: Register = (on, config) => {
       // their submit resolves (joinTurn in claude.ts).
       rt.turnEntries = rt.entering
       rt.entering = []
+      rt.turnSteps = 0
       await saveTurnMarks($)
       // Keep the Mac awake through a turn the app asked for: the person may be away from it.
       if (rt.turnEntries.length > 0 && !rt.awake) void keepAwake($)
@@ -549,6 +550,13 @@ export const register: Register = (on, config) => {
     if (e.agentId !== undefined || !(await read($, claude)).isWorking) return next(e)
     const label = describeTool(String(e.tool), e)
     await update($, claude, current => ({ ...current, tools: [...current.tools, label].slice(-6) }))
+    // A progress line for list_sessions, kept fresh without flooding: at most every 10 s.
+    rt.turnSteps++
+    const nowMs = await $.clock.now()
+    if (nowMs - rt.progressAt > 10_000) {
+      rt.progressAt = nowMs
+      void reportState($)
+    }
     try {
       return await next(e)
     } finally {

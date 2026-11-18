@@ -342,8 +342,14 @@ export async function reportState($: Engine): Promise<void> {
   // The session's folder can move after it starts (the desktop app moves a session out of the spare
   // folder it was started in), so it is reported every time, not only at connecting.
   const folder = await $.session.root().catch(() => '')
+  // While it works: how far along, in a line ("12 steps in 6 min; now: running the tests").
+  const now = activity.tools.at(-1)
+  const mins = activity.startedAt ? Math.round(((await $.clock.now()) - activity.startedAt) / 60_000) : 0
+  const progress = activity.isWorking
+    ? `${rt.turnSteps} step${rt.turnSteps === 1 ? '' : 's'} in ${mins ? `${mins} min` : 'under a minute'}${now ? `; now: ${now}` : ''}`
+    : ''
   const project = folder.split('/').filter(Boolean).pop() ?? ''
-  await post($, '/state', { ...(folder ? { folder, project } : {}), working: activity.isWorking, side: rt.isSide, asking: rt.sideOpen.size, ...(rt.parent ? { parent: rt.parent } : {}), runsIn: rt.runsIn, ...(rt.terminalApp ? { terminalApp: rt.terminalApp } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(task ? { task } : {}) }).catch(
+  await post($, '/state', { ...(folder ? { folder, project } : {}), ...(progress ? { progress } : {}), working: activity.isWorking, side: rt.isSide, asking: rt.sideOpen.size, ...(rt.parent ? { parent: rt.parent } : {}), runsIn: rt.runsIn, ...(rt.terminalApp ? { terminalApp: rt.terminalApp } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(task ? { task } : {}) }).catch(
     () => undefined,
   )
 }

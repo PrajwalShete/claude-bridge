@@ -38,7 +38,67 @@ Claude app ──MCP──▶ relay (Cloudflare Worker) ◀──WebSocket──
 
 ## Setup
 
-### 1. Deploy the relay (once)
+Claude Bridge runs on macOS with Claude Code (the desktop app or the CLI) and the Claude app.
+
+### 1. Install the plugin, on each computer
+
+In a terminal:
+
+```bash
+claude plugin marketplace add PrajwalShete/claude-bridge
+```
+
+```bash
+claude plugin install codebridge@claude-bridge
+```
+
+Or, inside a Claude Code session: `/plugin install codebridge --marketplace PrajwalShete/claude-bridge`.
+The desktop app uses plugins installed this way; it just can't add a marketplace from its own
+screens, so that one step is in a terminal. If the installer mentions two `userConfig` options
+(the relay's address), leave them: the defaults are right.
+
+Then open a new Claude Code session, in the desktop app or a terminal. Claude Bridge loads in
+every session from then on.
+
+**What it runs on your computer** (Claude Code warns that plugins can run code; this one does):
+hooks inside Claude Code; two small Swift programs that ship prebuilt, ad-hoc signed, for Apple
+silicon and Intel (a connector per open session, and a device agent per computer); and that
+device agent as a background service macOS starts at login, so the computer stays reachable with
+Claude closed (macOS shows its usual "background item added" notice). Its files are in
+`~/.config/claude-bridge/`, its log in `~/Library/Logs/claude-bridge-device.log`. `/bridge off`
+stops everything and removes the service. On a Mac that refuses helper programs (a managed Mac's
+"access denied"), **Auto**, the default, removes the service at once and each session talks to
+the relay itself instead; choose in the panel (Settings, **Background service**), or set
+`{ "env": { "CLAUDE_BRIDGE_HELPERS": "off" } }` in `~/.claude/settings.json` to never launch one.
+
+**Updates:** in Claude Code, `/plugin`, the **Marketplaces** tab, **claude-bridge**, **Enable
+auto-update**; or by hand:
+
+```bash
+claude plugin marketplace update claude-bridge && claude plugin update codebridge@claude-bridge
+```
+
+### 2. Your first computer
+
+Open the Claude Bridge panel (the small "● Bridge" button below the prompt, or `/bridge`) and,
+in **Connection**, choose **Own account**. Then, in the Claude app: Settings, Connectors, **Add
+custom connector** with the panel's connector URL, and paste the key on the page that opens.
+That key is your account: keep it to yourself.
+
+### 3. Every other computer
+
+Install the plugin there too (step 1). Its panel's **Connection** shows a code (**Link with a
+code**). Tell the Claude app "link my computer, code K7Q2 9FMX 3HDA": it connects a few seconds
+later, with a credential of its own (the account's key never leaves your first computer).
+`/bridge key <key>` also works, if you'd rather copy the key.
+
+### The relay
+
+The Claude app reaches your computers through a relay, a small Cloudflare Worker. By default the
+plugin uses the one at `claude-bridge.prajwalshete.com`, run by this project's author. Each key
+gets its own isolated store there; what passes through (your messages and Claude Code's replies)
+is not kept beyond what's on its way to you (see [Architecture](docs/ARCHITECTURE.md)), but whoever
+runs a relay can read what passes through it. To run your own:
 
 ```bash
 cd relay
@@ -47,53 +107,9 @@ openssl rand -base64 48 | npx wrangler secret put SIGNING_KEY
 npx wrangler deploy
 ```
 
-Edit `relay/wrangler.jsonc` first: set `routes` and `PUBLIC_ORIGIN` to your own domain.
-
-### 2. Install the plugin
-
-Save `codebridge.plugin` to your Claude account (in the Claude app or claude.ai: Customize,
-Plugins, Upload plugin, or **Save plugin** on a `.plugin` file). Every computer signed in to the
-account then gets it in Claude Code by itself, the desktop app and the CLI alike: nothing to
-install, no Xcode (the two small helper programs ship prebuilt for Apple silicon and Intel).
-
-To run it from this repository instead, while developing, point Claude Code at the folder in
-`~/.claude/settings.json`: `{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-bridge/plugin" } }`.
-A copy loaded that way takes precedence over the synced one of the same name in the CLI. The
-desktop app always prefers a copy saved to the Claude account, so while developing, don't keep
-one there: uninstall it, and desktop sessions run `plugin/` from the repository, reloading after
-each change.
-
-Set your relay in the plugin's options (`relayUrl`, and `chatUrl` if sessions should connect
-through a different hostname).
-
-Each computer runs a small **device agent** as a **background service**: a launchd agent that
-macOS starts at login and keeps running, so the computer stays reachable with Claude closed. The
-first session installs it (macOS shows its usual "background item added" notice). Its programs
-are in `~/.config/claude-bridge/bin/`, its log in `~/Library/Logs/claude-bridge-device.log`.
-`/bridge off` removes it.
-
-**Macs that refuse it** (a managed Mac's "access denied"): on **Auto**, the default, the plugin
-tries the background service first; if macOS won't run it, the plugin removes it at once, so the
-prompt doesn't come back, and from then on each session talks to the relay itself, over HTTP,
-from inside Claude Code, answering for its computer too. Choose yourself in the panel (Settings,
-**Background service**: Auto, On, Off), or set it once in `~/.claude/settings.json`, where it
-wins: `{ "env": { "CLAUDE_BRIDGE_HELPERS": "off" } }` never installs or launches anything. Without
-the service, the computer answers the Claude app while a Claude Code session is open on it.
-
-### 3. Your first computer
-
-Open the Claude Bridge panel (the small "● Bridge" button below the prompt, or `/bridge`) and, in
-**Connection**, choose **Own account**. Then, in the Claude app: Settings, Connectors, Add custom
-connector with the panel's connector URL, and paste the key on the page that opens.
-
-### 4. Every other computer
-
-Its panel's **Connection** shows a code (**Link with a code**, the setting for any computer
-with no account yet). Tell the Claude app "link my computer, code K7Q2 9FMX 3HDA": it connects
-a few seconds later, with a credential of its own (the account's key never leaves your first
-computer). The switch goes both ways: a computer that owns an account keeps its key aside when
-it links instead (`key.bak`) and gets it back on **Own account**. `/bridge key <key>` still
-works where you'd rather copy the key.
+Edit `relay/wrangler.jsonc` first (`routes` and `PUBLIC_ORIGIN`: your own domain), then set the
+plugin's options to it: `/plugin configure codebridge@claude-bridge`, `relayUrl` (and `chatUrl`
+if computers connect through a different hostname).
 
 ## Tools the Claude app gets
 
@@ -104,7 +120,7 @@ question, an answer) comes back as news.
 | --- | --- |
 | `list_sessions` | The open sessions by computer: name, project, what each is doing, which are watched, how many replies you haven't heard. |
 | `list_projects` | A computer's projects (folders), most recent first. |
-| `read_session` | The transcript itself, whole, no model: what you haven't heard, the last N, or a search; long results in pages, nothing cut. |
+| `read_session` | The transcript itself, whole, no model: what you haven't heard, the last N, or a search; a running turn comes with its steps so far and what it's doing now. Long results in pages, nothing cut. |
 | `catch_up` | The complete summary of a session for taking it over: goal, everything done, decisions and why, where it stands, what is open. Kept and updated from new exchanges only. |
 | `ask` | One question about a session, quoting its own words; checked with tools only when needed. |
 | `send_message` | Sends a request to a session; returns at once with the message's id. A repeat within two minutes isn't sent twice. |
@@ -167,6 +183,12 @@ uses it. Keep it private (it lives in `~/.config/claude-bridge/key`, readable on
   as reports, not instructions.
 
 ## Development
+
+While developing, run the plugin from this repository instead of an installed copy: point Claude
+Code at it in `~/.claude/settings.json`, `{ "env": { "CLAUDE_CODE_PLUGIN_DIRS":
+"/path/to/claude-bridge/plugin", "CLAUDE_CODE_PLUGIN_DIR_WATCH": "1" } }`, and uninstall any
+installed copy (the desktop app prefers an installed or account copy of the same name). Each
+session then reloads the plugin when a turn ends.
 
 ```bash
 cd relay && npx tsc --noEmit                 # type-check the relay

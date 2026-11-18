@@ -117,7 +117,7 @@ function deviceAgent(id: string, name: string, projects: Array<{ name: string; f
 const opened: any[] = [];
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
-check(/^1\.8\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+check(/^1\.9\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
 const tools = (await rpc("tools/list")).result.tools.map((t: any) => t.name);
 const expected = ["list_sessions", "list_projects", "read_session", "catch_up", "ask", "send_message", "answer", "wait_for_updates", "watch_sessions", "stop_session", "start_session", "resume_session", "fork_session", "rename", "link_computer", "show_screen", "report_problem", "get_instructions"];
 check(tools.length === expected.length && expected.every((t) => tools.includes(t)), `the tools: ${tools.join(", ")}`);
@@ -137,29 +137,29 @@ function fake(name: string) {
 }
 const mac = deviceAgent(MAC, "Prajwal's MacBook", [
   { name: "Nav", folder: "/Users/x/Nav" },
-  { name: "SdPaithani", folder: "/Users/x/SdPaithani" },
+  { name: "ShopFront", folder: "/Users/x/ShopFront" },
 ], {
   "/Users/x/Nav": [
     { id: "aaaa1111-nav", name: "Bridge architecture" },
     { id: "old11111-nav", name: "Voice mod" },
     { id: "old22222-nav", name: "Gemini spike" },
   ],
-  "/Users/x/SdPaithani": [{ id: "bbbb2222-sdp", name: "Login gates" }],
+  "/Users/x/ShopFront": [{ id: "bbbb2222-sdp", name: "Login gates" }],
 });
 const nav = chat("aaaa1111-nav", "Nav", fake("nav"));
-const sdp = chat("bbbb2222-sdp", "SdPaithani", fake("sdp"));
+const sdp = chat("bbbb2222-sdp", "ShopFront", fake("sdp"));
 await Bun.sleep(1500);
 
 // Devices, projects, sessions.
 let r = await call("list_sessions");
 check(r.includes("Prajwal's MacBook") && r.includes("Bridge architecture") && r.includes("Login gates"), "list_sessions shows the computer and its sessions by name");
 r = await call("list_projects");
-check(r.includes('"project":"Nav"') && r.includes('"project":"SdPaithani"') && r.includes('"openSessions":1'), "list_projects lists the computer's projects with open sessions");
+check(r.includes('"project":"Nav"') && r.includes('"project":"ShopFront"') && r.includes('"openSessions":1'), "list_projects lists the computer's projects with open sessions");
 let t = Date.now();
 r = await call("send_message", { session: "bridge architecture", text: "build the thing" });
 check(r.includes("Session: Bridge architecture (Nav, aaaa1111)") && r.includes('"status":"sent"') && Date.now() - t < 3000, "a session is found by its own name, and send returns at once");
-r = await call("send_message", { session: "SD Paithani", text: "deploy" });
-check(r.includes("Login gates"), "\"SD Paithani\" (a project's name) finds its session");
+r = await call("send_message", { session: "Shop Front", text: "deploy" });
+check(r.includes("Login gates"), "\"Shop Front\" (a project's name) finds its session");
 r = await call("send_message", { text: "hello" });
 check(r.includes("Say which session"), "no session named with two open asks which one");
 
@@ -184,12 +184,12 @@ r = await call("catch_up", { session: "gemini spike" });
 check(r.includes("Session: Gemini spike"), "the resumed session is reachable by its name");
 r = await call("resume_session", { number: 1 });
 check(r.includes("already open"), "an open session isn't opened twice");
-r = await call("resume_session", { project: "SdPaithani", number: 1 });
+r = await call("resume_session", { project: "ShopFront", number: 1 });
 check(r.includes("The last list was for Nav"), "a number only counts for the list it came from");
 
 // Start a new session with its first message.
 t = Date.now();
-r = await call("start_session", { project: "SdPaithani", name: "Invoice export", message: "add a CSV export" });
+r = await call("start_session", { project: "ShopFront", name: "Invoice export", message: "add a CSV export" });
 check(r.includes('"status":"started"') && r.includes("Invoice export") && r.includes('"status":"sent"') && Date.now() - t < 15_000, "start_session starts it, waits until it is live, and sends its first message");
 r = await call("list_sessions");
 check(r.includes("Invoice export"), "the new session is listed by its name");
@@ -407,6 +407,13 @@ check(!!report && Object.keys(report).sort().join(",") === "at,id,text", "GET /a
 const removed = await (await fetch(`${BASE}/api/reports/${encodeURIComponent(report?.id ?? "x")}`, { method: "DELETE", headers: { Authorization: `Bearer ${key}` } })).json() as any;
 const left = await (await fetch(`${BASE}/api/reports`, { headers: { Authorization: `Bearer ${key}` } })).json() as any;
 check(removed.removed === true && left.reports.length === 0, "a report dealt with can be removed");
+
+// A working session's progress line shows in list_sessions.
+await nav.post("/state", { working: true, side: false, asking: 0, progress: "12 steps in 6 min; now: running the tests" });
+await Bun.sleep(300);
+r = await call("list_sessions");
+check(r.includes('"progress":"12 steps in 6 min; now: running the tests"'), "a working session shows how far along it is");
+await nav.post("/state", { working: false, side: false, asking: 0 });
 
 // The diagnostic log.
 const diag = await (await fetch(`${BASE}/api/diag`, { headers: { Authorization: `Bearer ${key}` } })).json() as any;

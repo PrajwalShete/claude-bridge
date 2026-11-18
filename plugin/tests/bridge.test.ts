@@ -142,7 +142,7 @@ test('the transcript gives exchanges labelled by origin, skipping compaction, in
 
 test('read_session pages never cut a message: an oversized one continues exactly where it stopped', () => {
   const long = (tag: string, n: number) => `${tag} begins. ${'All of it. '.repeat(Math.ceil(n / 11)).slice(0, n)} ${tag} ends.`
-  const x = (id: string, n: number, start: number) => ({ id, start, end: start + 1, from: 'computer', at: '', message: `ask ${id}`, reply: long(id, n), changes: [], finishedAt: 't' })
+  const x = (id: string, n: number, start: number) => ({ id, start, end: start + 1, from: 'computer', at: '', message: `ask ${id}`, reply: long(id, n), changes: [], finishedAt: 't', steps: [] })
   const selection = [x('a', 3_000, 0), x('b', 25_000, 10)]
   const first = page(selection, 10_000)
   expect((first.items[0] as { reply: string }).reply).toBe(long('a', 3_000))

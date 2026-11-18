@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-bridge",
+  "description": "Claude Bridge: talk to your Claude Code sessions from the Claude app, voice mode included.",
+  "owner": { "name": "Prajwal Shete", "url": "https://github.com/PrajwalShete" },
+  "plugins": [
+    {
+      "name": "codebridge",
+      "source": "./plugin",
+      "description": "Lets the Claude app (voice mode included) reach your Claude Code sessions: send requests, hear replies, answer questions, catch up, start, resume and fork sessions.",
+      "category": "productivity",
+      "keywords": ["voice", "remote", "claude app", "sessions"]
+    }
+  ]
+}

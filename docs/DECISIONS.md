@@ -2,6 +2,21 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-19: progress of a running turn
+
+1. **Claude Code writes each step to the transcript as it happens** (checked live: a tool call two
+   seconds old was already there), so progress is read from the file, with no model.
+2. **Pulled, not pushed.** Steps come when the app asks (`read_session`), and `list_sessions` carries
+   a one-line progress per working session; sending every step as news would flood the assistant.
+3. **A step is** what Claude Code said (whole, never cut) or a tool call as one past-tense line
+   without its output, marked "(failed)" from its result; runs of reads and searches are one line;
+   the call still going is "now". The desktop app's own bookkeeping calls are left out.
+4. **"Running" comes from the plugin's live state,** not from the transcript: a turn's first reply
+   row used to make it look finished, and a summary update could fold it in early and miss the rest.
+5. **The voice assistant speaks a short status first** (how long, how many steps, what it found,
+   what it's doing now) and goes through the steps only if asked; generally it talks like a person,
+   technical words said plainly, every point told in its own words.
+
 ## 2026-11-19: reading any size of session
 
 1. **Claude Code returns at most 4 MiB per `$.fs.read`**, and a read's answer counts: bytes come

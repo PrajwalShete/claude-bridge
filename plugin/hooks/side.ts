@@ -119,21 +119,22 @@ const UPDATE_BATCH = 300_000
 export async function currentSummary($: Engine, full: boolean): Promise<{ text: string; covers: string; how: string }> {
   const key = `summary:${await $.session.id()}`
   const kept = (await $.store.get(key)) as Kept | undefined
-  const { read, size } = await transcriptFile($)
+  const { read: readFile, size } = await transcriptFile($)
   const covers = (k: Kept) => `everything through ${new Date(k.at).toISOString()} (${k.exchanges} exchange${k.exchanges === 1 ? '' : 's'} folded in)`
   if (kept && !full) {
     let fresh: Exchange[] | undefined
     if (typeof kept.throughEnd === 'number' && kept.throughEnd <= size) {
-      fresh = (await readForward(read, kept.throughEnd, size)).exchanges
+      fresh = (await readForward(readFile, kept.throughEnd, size)).exchanges
     } else {
       // A summary kept before byte positions: look back for its last exchange once.
-      const scan = await scanBack(read, size, list => list.some(x => x.id === kept.through))
+      const scan = await scanBack(readFile, size, list => list.some(x => x.id === kept.through))
       const at = scan.exchanges.findIndex(x => x.id === kept.through)
       fresh = at >= 0 ? scan.exchanges.slice(at + 1) : undefined
     }
     if (fresh) {
-      // Only finished exchanges are folded in; a running one waits for its reply.
-      const upto = fresh.filter(x => x.finishedAt)
+      // Only finished exchanges are folded in: the newest waits while the session is still on it.
+      const working = (await read($, claude)).isWorking
+      const upto = fresh.filter(x => x.finishedAt && !(working && x === fresh.at(-1)))
       if (upto.length === 0) return { text: kept.text, covers: covers(kept), how: 'kept: nothing new since it was written' }
       let text = kept.text
       for (let i = 0; i < upto.length; ) {
@@ -166,8 +167,9 @@ export async function currentSummary($: Engine, full: boolean): Promise<{ text: 
     return { text: '', covers: '', how: reply.isAnswered ? 'the model wrote nothing' : String(reply.reason) }
   }
   // Where the summary ends: the newest finished exchange, found by reading back only as far as it.
-  const tail = await scanBack(read, size, list => list.some(x => x.finishedAt))
-  const last = tail.exchanges.filter(x => x.finishedAt).at(-1)
+  const working = (await read($, claude)).isWorking
+  const tail = await scanBack(readFile, size, list => list.length >= 2 || (!working && list.length >= 1))
+  const last = tail.exchanges.filter((x, i, all) => x.finishedAt && !(working && i === all.length - 1)).at(-1)
   const next: Kept = { text: reply.text.trim(), through: last?.id ?? '', ...(last ? { throughEnd: last.end } : {}), at: await $.clock.now(), exchanges: 0 }
   await $.store.set(key, next)
   await note($, `summary written from the whole session (${next.text.length} chars)`)

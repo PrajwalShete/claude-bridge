@@ -119,8 +119,10 @@ where they don't ([decision](DECISIONS.md)).
 
 ## Getting it onto a computer
 
-The plugin is saved to the person's Claude account once and syncs to every computer signed in
-to it. Its two Swift programs ship prebuilt (universal, ad-hoc signed, stamped with their
+The plugin installs from this repository as a Claude Code plugin marketplace
+(`.claude-plugin/marketplace.json`; `claude plugin marketplace add PrajwalShete/claude-bridge`, then
+`claude plugin install codebridge@claude-bridge`), on each computer. People get a new version when
+`plugin/.claude-plugin/plugin.json`'s `version` changes. Its two Swift programs ship prebuilt (universal, ad-hoc signed, stamped with their
 source's SHA-256), so a computer needs no Xcode: the plugin copies the matching one into
 `~/.config/claude-bridge/bin/` and builds from source only when a source changed.
 
@@ -161,7 +163,7 @@ A Claude Code plugin of function hooks.
 ### Addressing sessions
 
 There is no active session. Every session tool takes `session`: the session's name, its
-project's name as the person says it ("SD Paithani" finds `SdPaithani`), or an id. `device`
+project's name as the person says it ("Shop Front" finds `ShopFront`), or an id. `device`
 narrows it when more than one computer is in play. It can be left out when exactly one session
 is watched, or exactly one is open. When a name fits several sessions, the order is:
 1. a watched one

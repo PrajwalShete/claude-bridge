@@ -147,3 +147,12 @@ The plugin starts the connector with one JSON object on stdin:
   `waiting` (`text`: what Claude Code waits on at its screen).
 - **MCP:** `notifications/cancelled` ends the named `wait_for_updates` without marking news heard;
   so does the app hanging up (`request.signal`).
+
+## Added in 1.8.0
+
+- **`report_problem`** (tool): `{ paragraph }`, kept as `report:<time>-<random>` → `{ at, text }`.
+- **`GET /api/reports`** with the account key: `{ reports: [{ id, at, text }] }`, oldest first.
+  **`DELETE /api/reports/<id>`** removes one: `{ removed }`.
+- **`get_instructions`** (tool): the person's instructions for the assistant, `{ instructions, updated }`.
+  **`GET /api/instructions`** and **`PUT /api/instructions` `{ text }`** with the account key or a
+  linked computer's credential: the panel reads and saves them (`customInstructions` in the hub).

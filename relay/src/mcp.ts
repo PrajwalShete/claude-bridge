@@ -56,7 +56,7 @@ let versionCache: string | undefined;
 async function serverVersion(): Promise<string> {
   if (!versionCache) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ TOOLS, INSTRUCTIONS })));
-    versionCache = `1.7.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    versionCache = `1.8.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
   }
   return versionCache;
 }
@@ -88,6 +88,10 @@ async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>,
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
       console.log(JSON.stringify({ rpc: "tools/call", tool }));
       // Paused from the computer: every call is refused, and only the computer can resume it.
+      // A report reaches no computer, so it is taken even while paused.
+      if (tool === "report_problem") return ok(await hub.report(args.paragraph));
+      // The person's instructions reach no computer either.
+      if (tool === "get_instructions") return ok(await hub.instructionsTool());
       if (await hub.isPaused()) {
         return ok(
           errorResult(

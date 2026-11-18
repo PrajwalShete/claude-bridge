@@ -117,9 +117,9 @@ function deviceAgent(id: string, name: string, projects: Array<{ name: string; f
 const opened: any[] = [];
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
-check(/^1\.7\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+check(/^1\.8\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
 const tools = (await rpc("tools/list")).result.tools.map((t: any) => t.name);
-const expected = ["list_sessions", "list_projects", "read_session", "catch_up", "ask", "send_message", "answer", "wait_for_updates", "watch_sessions", "stop_session", "start_session", "resume_session", "fork_session", "rename", "link_computer", "show_screen"];
+const expected = ["list_sessions", "list_projects", "read_session", "catch_up", "ask", "send_message", "answer", "wait_for_updates", "watch_sessions", "stop_session", "start_session", "resume_session", "fork_session", "rename", "link_computer", "show_screen", "report_problem", "get_instructions"];
 check(tools.length === expected.length && expected.every((t) => tools.includes(t)), `the tools: ${tools.join(", ")}`);
 const desc = (await rpc("tools/list")).result.tools.find((t: any) => t.name === "send_message")?.description ?? "";
 check(desc.includes("Sends the person's request") && init.result.instructions.includes("adding nothing of your own"), "the send-only-what-asked rule is in the instructions and the send tool");
@@ -322,6 +322,14 @@ r = await call("list_sessions");
 check(ok.ok === true && r.includes("Claude Bridge is paused") && r.includes("can't be turned on from here"), "a paused account refuses the app's calls");
 r = await call("start_session", { project: "Nav", name: "should not start" });
 check(r.includes("Claude Bridge is paused") && !mac.calls.some((c) => c.tool === "start_session" && c.args.name === "should not start"), "nothing reaches a computer while paused");
+const PARAGRAPH = "I called read_session on Haiku and its header said Nav. " + "Details. ".repeat(400);
+r = await call("report_problem", { paragraph: PARAGRAPH });
+check(r.includes('"reported"'), "a problem can be reported, even while paused");
+const MINE = "Speak plainly and keep answers short. Tell me what failed first.\nNever read code aloud.";
+const saved = await (await fetch(`${BASE}/api/instructions`, { method: "PUT", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ text: MINE }) })).json() as any;
+r = await call("get_instructions");
+check(saved.text === MINE && r.includes("Speak plainly and keep answers short.") && r.includes("Never read code aloud."), "the panel's instructions are kept, and get_instructions gives them whole, even while paused");
+check(init.result.instructions.startsWith("First, at the start of every conversation") && init.result.instructions.includes("get_instructions"), "the connector's instructions say to call get_instructions first");
 check(sdp.seen.some((e) => e.t === "link" && e.paused === true), "every session hears that it is paused");
 await sdp.post("/event", { kind: "finished", text: "news while paused", forApp: true });
 ok = await sdp.post("/pause", { paused: false });
@@ -391,6 +399,14 @@ await nav.post("/state", { working: false, side: false, asking: 0, folder: "/Use
 await Bun.sleep(300);
 r = await call("list_sessions");
 check(r.includes('"project":"Moved"'), "a session's folder move updates its project");
+
+// Reports: read whole, then removed once dealt with.
+const kept = await (await fetch(`${BASE}/api/reports`, { headers: { Authorization: `Bearer ${key}` } })).json() as any;
+const report = kept.reports?.find((x: any) => x.text === PARAGRAPH.trim());
+check(!!report && Object.keys(report).sort().join(",") === "at,id,text", "GET /api/reports gives the paragraph whole, with only its id and time");
+const removed = await (await fetch(`${BASE}/api/reports/${encodeURIComponent(report?.id ?? "x")}`, { method: "DELETE", headers: { Authorization: `Bearer ${key}` } })).json() as any;
+const left = await (await fetch(`${BASE}/api/reports`, { headers: { Authorization: `Bearer ${key}` } })).json() as any;
+check(removed.removed === true && left.reports.length === 0, "a report dealt with can be removed");
 
 // The diagnostic log.
 const diag = await (await fetch(`${BASE}/api/diag`, { headers: { Authorization: `Bearer ${key}` } })).json() as any;

@@ -14,7 +14,7 @@ export const PANE = 'claude-bridge'
 
 // Every file that reads or writes a value declares its own atom for it (the validator checks
 // each `$.state` key where it is used); the starting values they share live here.
-export const INITIAL_LINK: LinkState = { enabled: true, connected: false, watched: false, paused: false, url: '', key: '', askFirst: false, screen: true, openIn: 'auto', linkCode: '', helpers: 'auto', inside: false }
+export const INITIAL_LINK: LinkState = { enabled: true, connected: false, watched: false, instructions: '', instructionsNote: '', paused: false, url: '', key: '', askFirst: false, screen: true, openIn: 'auto', linkCode: '', helpers: 'auto', inside: false }
 export const INITIAL_CLAUDE: ClaudeActivity = { isWorking: false, tools: [], replies: [] }
 export const INITIAL_LOG: LogEntry[] = []
 export const NO_QUESTION = null as PendingQuestion | null
@@ -45,11 +45,6 @@ export const rt = {
   turn: undefined as { id: string; startedAt: number } | undefined,
   /** The app's last message and its id: the same text again within two minutes is a repeat. */
   lastSentText: { text: '', at: 0, id: '' },
-  /** After the person interrupts, Claude Code drops plugin prompts until they type one. */
-  stopStands: false,
-  /** The Claude app stopped the turn (stop_session): its next message is sent as normal, unlike after
-   * the person's own interrupt, which Claude Code follows by dropping plugin prompts. */
-  appStopped: false,
   /** The `caffeinate` this plugin started to keep the Mac awake through a turn the app asked for. */
   awake: '' as string,
   ticker: undefined as Timer | undefined,

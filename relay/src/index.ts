@@ -45,6 +45,8 @@ export default {
       if (m) return link(req, env, m[1]);
       if (path === "/api/status") return status(req, env);
       if (path === "/api/diag") return diag(req, env);
+      if (path === "/api/reports" || path.startsWith("/api/reports/")) return reports(req, env, path);
+      if (path === "/api/instructions") return instructions(req, env);
 
       m = path.match(PICTURE_PATH);
       if (m) return picture(env, m[1], m[2]);
@@ -97,6 +99,37 @@ async function diag(req: Request, env: Env): Promise<Response> {
   const id = await keyFrom(req);
   if (!id) return json({ error: "Send the Claude Bridge key as a Bearer token." }, 401);
   return json({ calls: await env.HUBS.get(env.HUBS.idFromName(id)).diag() });
+}
+
+/** GET /api/reports with the key: every report kept; DELETE /api/reports/<id> removes one dealt with. */
+async function reports(req: Request, env: Env, path: string): Promise<Response> {
+  const id = await keyFrom(req);
+  if (!id) return json({ error: "Send the Claude Bridge key as a Bearer token." }, 401);
+  const hub = env.HUBS.get(env.HUBS.idFromName(id));
+  const one = path.slice("/api/reports/".length);
+  if (req.method === "DELETE" && one) return json({ removed: await hub.removeReport(decodeURIComponent(one)) });
+  if (req.method === "GET" && path === "/api/reports") return json({ reports: await hub.reports() });
+  return json({ error: "GET /api/reports, or DELETE /api/reports/<id>." }, 405);
+}
+
+/**
+ * /api/instructions: the person's instructions for the Claude app's assistant. GET reads them; PUT
+ * `{ text }` replaces them. The panel calls it with the account key or a linked computer's credential.
+ */
+async function instructions(req: Request, env: Env): Promise<Response> {
+  const account = await peerAccount(req);
+  if (!account) return json({ error: "Missing or malformed Claude Bridge key." }, 401);
+  const hub = env.HUBS.get(env.HUBS.idFromName(account.id));
+  if (req.method === "GET") {
+    const out = await hub.instructions(account.device);
+    return json(out, "error" in out ? 401 : 200);
+  }
+  if (req.method === "PUT") {
+    const body = (await req.json().catch(() => ({}))) as { text?: unknown };
+    const out = await hub.setInstructions(body.text, account.device);
+    return json(out, "error" in out ? 400 : 200);
+  }
+  return json({ error: "GET or PUT { text }." }, 405);
 }
 
 /** The account a polling session's credential names, and a linked computer's credential hash for its hub to check. */

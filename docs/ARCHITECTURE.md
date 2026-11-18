@@ -224,8 +224,8 @@ from a desktop: there is one stream of news per account.
 Nothing waits for Claude Code to work. `send_message` submits the prompt and returns at once:
 - `sent`: its turn began
 - `queued`: Claude Code is busy and takes it next
-- `not sent`: Claude Code refused it, or the session is set to **ask first**; the message is
-  left in the prompt box
+- `sending`: Claude Code didn't take it at once; it is tried again for about a minute
+- `not sent`: only when the session is set to **ask first**, or the app asked for a draft
 
 Each message has an id. `$.prompt.submit` resolves the moment the prompt's turn starts, and a
 plugin's prompt runs only once the session is idle, so no other turn can start in between: that
@@ -269,9 +269,10 @@ disconnects everything.
 
 ### Reliability
 
-- A prompt Claude Code refuses (after the person interrupts, for example) goes into the prompt
-  box, and the app is told to have the person press Enter. It is never reported as sent.
-- A repeat of the same message within 20 s is not sent twice.
+- A message from the app is always sent, whatever stopped Claude Code before (the person at the
+  computer, or `stop_session`). A refusal is tried again every 7 s for about a minute; only if every
+  try is refused does it go into the prompt box, and the app hears why, as news.
+- A repeat of the same message within two minutes is not sent twice.
 - A new message is refused while Claude Code waits on a question.
 - A crashed connector is restarted; every session checks every 30 s that the device agent runs.
 - Sessions starting together build the Swift programs into separate files and move them into

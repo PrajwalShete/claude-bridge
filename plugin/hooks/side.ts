@@ -9,7 +9,7 @@
 import { atom, read } from 'claude-code'
 
 import { reportState, sendEvent } from './connector'
-import { readTail } from './transcript'
+import { type Exchange, readForward, scanBack, transcriptFile } from './transcript'
 import { type Engine, addLog, errorText, note, rt, short, INITIAL_CLAUDE } from './state'
 
 const claude = atom({ plugin: 'codebridge', key: 'claude' } as const, INITIAL_CLAUDE)
@@ -101,44 +101,63 @@ const UPDATE_PROMPT =
   'stands now, Open): add what the new exchanges did and decided, and update anything they changed. Keep everything ' +
   'still true from the old summary; nothing important may be dropped. Write only the new summary.'
 
-type Kept = { text: string; through: string; at: number; exchanges: number }
+/** The summary kept in the store: its text; the last exchange it covers (its id, and the byte after
+ * it in the transcript, where an update starts reading); when it was written. */
+type Kept = { text: string; through: string; throughEnd?: number; at: number; exchanges: number }
+
+/** New exchanges are folded into the summary in batches of about this many characters, so no one
+ * update asks the model for more than it should take at once. */
+const UPDATE_BATCH = 300_000
 
 /**
  * The session's complete summary, kept in the store (it survives reloads): returned as is when no
- * exchange finished since; else brought up to date from the new exchanges only, on the session's
- * own model and effort (never a costlier one), with no history to re-read. Written from the whole
- * session (one read of it, as a fork) the first time, or when `full` is asked.
+ * exchange finished since; else brought up to date from the new exchanges only, read straight from
+ * where the summary ends (no part of the file twice), on the session's own model and effort (never a
+ * costlier one), with no history to re-read. Written from the whole session (one fork, which reads
+ * the session's own context, not the file) the first time, or when `full` is asked.
  */
 export async function currentSummary($: Engine, full: boolean): Promise<{ text: string; covers: string; how: string }> {
   const key = `summary:${await $.session.id()}`
   const kept = (await $.store.get(key)) as Kept | undefined
-  const { exchanges } = await readTail($, kept && !full ? 200 : 1)
-  const finished = exchanges.filter(x => x.finishedAt)
-  const latest = finished.at(-1)
-  const covers = (k: Kept) => `everything through ${new Date(k.at).toISOString()} (${k.exchanges} exchange${k.exchanges === 1 ? '' : 's'} in all)`
+  const { read, size } = await transcriptFile($)
+  const covers = (k: Kept) => `everything through ${new Date(k.at).toISOString()} (${k.exchanges} exchange${k.exchanges === 1 ? '' : 's'} folded in)`
   if (kept && !full) {
-    const from = finished.findIndex(x => x.id === kept.through)
-    const fresh = from >= 0 ? finished.slice(from + 1) : undefined
-    if (fresh && fresh.length === 0) return { text: kept.text, covers: covers(kept), how: 'kept: nothing new since it was written' }
+    let fresh: Exchange[] | undefined
+    if (typeof kept.throughEnd === 'number' && kept.throughEnd <= size) {
+      fresh = (await readForward(read, kept.throughEnd, size)).exchanges
+    } else {
+      // A summary kept before byte positions: look back for its last exchange once.
+      const scan = await scanBack(read, size, list => list.some(x => x.id === kept.through))
+      const at = scan.exchanges.findIndex(x => x.id === kept.through)
+      fresh = at >= 0 ? scan.exchanges.slice(at + 1) : undefined
+    }
     if (fresh) {
-      const model = rt.model || (await $.session.model().catch(() => ''))
-      const effort = (rt.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined
-      const exchangesText = fresh
-        .map(x => `--- ${x.from} at ${x.at}:\n${x.message}\n--- Claude Code replied:\n${x.reply || '(no reply)'}${x.changes.length ? `\n--- Changed: ${x.changes.join('; ')}` : ''}`)
-        .join('\n\n')
-      const reply = await $.model.complete({
-        model,
-        ...(effort ? { effort } : {}),
-        maxTokens: 32_000,
-        prompt: `${UPDATE_PROMPT}\n\n=== Summary so far ===\n${kept.text}\n\n=== New exchanges ===\n${exchangesText}`,
-      })
-      if (reply.isAnswered && reply.text.trim()) {
-        const next: Kept = { text: reply.text.trim(), through: latest!.id, at: await $.clock.now(), exchanges: kept.exchanges + fresh.length }
-        await $.store.set(key, next)
-        await note($, `summary updated from ${fresh.length} new exchange(s) (${next.text.length} chars)`)
-        return { text: next.text, covers: covers(next), how: `updated from ${fresh.length} new exchange${fresh.length === 1 ? '' : 's'}` }
+      // Only finished exchanges are folded in; a running one waits for its reply.
+      const upto = fresh.filter(x => x.finishedAt)
+      if (upto.length === 0) return { text: kept.text, covers: covers(kept), how: 'kept: nothing new since it was written' }
+      let text = kept.text
+      for (let i = 0; i < upto.length; ) {
+        const batch: Exchange[] = []
+        let chars = 0
+        while (i < upto.length && (batch.length === 0 || chars + upto[i]!.message.length + upto[i]!.reply.length <= UPDATE_BATCH)) {
+          chars += upto[i]!.message.length + upto[i]!.reply.length
+          batch.push(upto[i++]!)
+        }
+        const next = await updateSummary($, text, batch)
+        if (!next) {
+          await note($, 'summary update failed; writing it from the whole session')
+          text = ''
+          break
+        }
+        text = next
       }
-      await note($, `summary update failed: ${reply.isAnswered ? 'empty' : reply.reason}; writing it from the whole session`)
+      if (text) {
+        const last = upto.at(-1)!
+        const next: Kept = { text, through: last.id, throughEnd: last.end, at: await $.clock.now(), exchanges: kept.exchanges + upto.length }
+        await $.store.set(key, next)
+        await note($, `summary updated from ${upto.length} new exchange(s) (${text.length} chars)`)
+        return { text, covers: covers(next), how: `updated from ${upto.length} new exchange${upto.length === 1 ? '' : 's'}` }
+      }
     }
   }
   const reply = await $.model.fork({ prompt: SUMMARY_PROMPT })
@@ -146,9 +165,27 @@ export async function currentSummary($: Engine, full: boolean): Promise<{ text: 
     if (kept) return { text: kept.text, covers: covers(kept), how: `kept: a fresh one couldn't be written (${reply.isAnswered ? 'empty' : reply.reason})` }
     return { text: '', covers: '', how: reply.isAnswered ? 'the model wrote nothing' : String(reply.reason) }
   }
-  const all = (await readTail($, Number.POSITIVE_INFINITY)).exchanges.filter(x => x.finishedAt)
-  const next: Kept = { text: reply.text.trim(), through: all.at(-1)?.id ?? '', at: await $.clock.now(), exchanges: all.length }
+  // Where the summary ends: the newest finished exchange, found by reading back only as far as it.
+  const tail = await scanBack(read, size, list => list.some(x => x.finishedAt))
+  const last = tail.exchanges.filter(x => x.finishedAt).at(-1)
+  const next: Kept = { text: reply.text.trim(), through: last?.id ?? '', ...(last ? { throughEnd: last.end } : {}), at: await $.clock.now(), exchanges: 0 }
   await $.store.set(key, next)
   await note($, `summary written from the whole session (${next.text.length} chars)`)
-  return { text: next.text, covers: covers(next), how: 'written from the whole session' }
+  return { text: next.text, covers: `everything through ${new Date(next.at).toISOString()}`, how: 'written from the whole session' }
+}
+
+/** One update: the summary so far plus a batch of new exchanges, on the session's own model and effort. */
+async function updateSummary($: Engine, summary: string, batch: Exchange[]): Promise<string | undefined> {
+  const model = rt.model || (await $.session.model().catch(() => ''))
+  const effort = (rt.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined
+  const exchangesText = batch
+    .map(x => `--- ${x.from} at ${x.at}:\n${x.message}\n--- Claude Code replied:\n${x.reply || '(no reply)'}${x.changes.length ? `\n--- Changed: ${x.changes.join('; ')}` : ''}`)
+    .join('\n\n')
+  const reply = await $.model.complete({
+    model,
+    ...(effort ? { effort } : {}),
+    maxTokens: 32_000,
+    prompt: `${UPDATE_PROMPT}\n\n=== Summary so far ===\n${summary}\n\n=== New exchanges ===\n${exchangesText}`,
+  })
+  return reply.isAnswered && reply.text.trim() ? reply.text.trim() : undefined
 }

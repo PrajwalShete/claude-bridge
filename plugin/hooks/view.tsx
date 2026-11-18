@@ -22,6 +22,8 @@ export type Actions = {
   togglePause: () => void
   toggleSetup: () => void
   toggleSettings: () => void
+  /** Saves the person's instructions for the Claude app's assistant. */
+  saveInstructions: (text: string) => void
   setEnabled: (on: boolean) => void
   setAskFirst: (on: boolean) => void
   setScreen: (on: boolean) => void
@@ -98,7 +100,7 @@ function appMessages(m: ViewModel): Array<{ id: string; text: string; answered: 
 
 /** What the panel draws with: every surface carries these (a newer surface's extra elements, such as
  * `Shader`, aren't needed here). */
-type Ui = Pick<Elements['mobile'], 'Box' | 'Text' | 'Button' | 'Svg'> & Partial<Pick<Elements['desktop'], 'Select'>>
+type Ui = Pick<Elements['mobile'], 'Box' | 'Text' | 'Button' | 'Svg'> & Partial<Pick<Elements['desktop'], 'Select' | 'Input'>>
 
 /** Small line icons beside each row, as the app's own panels have them (16 px, Tabler-style strokes). */
 const ICON = (body: string) =>
@@ -122,6 +124,7 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions, surface?: RenderSurf
   const { Box, Text, Button, Svg } = ui
   // The phone draws no drop-down yet (Elements['mobile']): it gets buttons instead.
   const Select = surface === 'mobile' ? undefined : ui.Select
+  const Input = surface === 'mobile' ? undefined : ui.Input
   const l = linkLine(m.link)
   const messages = appMessages(m)
   const setupShown = m.setupOpen || !m.link.connected
@@ -283,6 +286,34 @@ export function panelView(ui: Ui, m: ViewModel, a: Actions, surface?: RenderSurf
           )}
         </Box> : undefined,
         <Button key="settings-toggle" plain dimColor label={m.settingsShown ? 'Hide' : 'Show'} onPress={a.toggleSettings} />,
+      )}
+
+      {divider('instructions-divider')}
+      {section(
+        'instructions',
+        'Instructions for the Claude app',
+        <Box flexDirection="column" gap="xs">
+          <Text size="footnote" dimColor>
+            How the Claude app's assistant should talk and behave with you. It reads them at the start of every conversation.
+          </Text>
+          {Input ? (
+            <Input
+              key="instructions"
+              rows={6}
+              value={m.link.instructions}
+              placeholder="For example: keep it short, speak in plain English, tell me what failed first."
+              submitLabel="Save"
+              onSubmit={v => a.saveInstructions(v)}
+            />
+          ) : (
+            <Text size="footnote">{m.link.instructions || 'None yet: write them in this panel on your computer.'}</Text>
+          )}
+          {m.link.instructionsNote ? (
+            <Text size="footnote" dimColor>
+              {m.link.instructionsNote}
+            </Text>
+          ) : null}
+        </Box>,
       )}
 
       {divider('messages-divider')}

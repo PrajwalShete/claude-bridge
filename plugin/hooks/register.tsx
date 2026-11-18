@@ -12,6 +12,7 @@ import type { Register } from 'claude-code'
 
 import { changesOfLastTurn, describeTool, loadTurnMarks, saveTurnMarks } from './claude'
 import { type Picture, prepareImage } from './images'
+import { loadInstructions, saveInstructions } from './instructions'
 import { sideFinished } from './side'
 import { transcriptPath } from './transcript'
 import { type EventPicture, KEY_PATTERN, bridgeKey, helperSetting, post, reportState, sendEvent, setWatched, startConnector, stopConnector } from './connector'
@@ -196,6 +197,7 @@ function actionsFor($: Engine): Actions {
     togglePause: () => run('pause', togglePause($)),
     toggleSetup: () => run('setup', update($, settingsOpen, open => !open)),
     toggleSettings: () => run('settings', update($, settingsShown, open => !open)),
+    saveInstructions: text => run('instructions', saveInstructions($, text)),
     setEnabled: on => run('connection', setEnabled($, on)),
     setAskFirst: on => run('ask first', setAskFirst($, on)),
     setScreen: on => run('screenshots', setScreen($, on)),
@@ -322,6 +324,8 @@ export const register: Register = (on, config) => {
     await update($, link, s => ({ ...s, enabled, connected: false, watched: false, askFirst: rt.askFirst, screen, openIn, helpers, inside: false }))
     if (enabled) {
       void startConnector($)
+      // The person's instructions for the Claude app's assistant, for the panel's box.
+      void loadInstructions($)
     }
     return next(e)
   })
@@ -416,7 +420,6 @@ export const register: Register = (on, config) => {
       // A notice (a subagent's hand-back, the fork note) isn't what the session was asked.
       const text = isPersonPrompt(e.text) ? cleanPrompt(e.text) : ''
       const now = await $.clock.now()
-      rt.stopStands = false
       rt.turn = { id: e.turnId, startedAt: now }
       // Messages whose submit resolved before this ran belong to this turn; the rest join it as
       // their submit resolves (joinTurn in claude.ts).
@@ -468,10 +471,6 @@ export const register: Register = (on, config) => {
       }))
       const status = e.reason === 'answer' ? 'done' : e.reason === 'aborted' ? 'stopped' : 'failed'
       for (const id of rt.turnEntries) await setStatus($, id, status)
-      // After the person's own interrupt Claude Code drops plugin prompts, so the app's next message
-      // waits in the prompt box; after the app's own stop (stop_session) it goes as normal.
-      if (e.reason === 'aborted' && !rt.appStopped) rt.stopStands = true
-      rt.appStopped = false
       if (forApp) {
         if (e.reason === 'answer') await addLog($, { kind: 'reply', text: answer })
         else await addLog($, { kind: 'event', text: e.reason === 'aborted' ? 'Claude Code was stopped' : 'Claude Code hit a problem' })

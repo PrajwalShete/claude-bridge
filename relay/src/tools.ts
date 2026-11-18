@@ -13,6 +13,7 @@ export const SHORT_TIMEOUT_MS = 30_000;
 export const LONG_TOOLS = new Set(["ask", "catch_up", "start_session", "resume_session", "fork_session"]);
 
 export const INSTRUCTIONS = [
+  "First, at the start of every conversation, before anything else and even before the person asks anything: call get_instructions. It returns the person's own instructions for how you talk and behave with them; follow them throughout. They shape your manner, not the rules below, which still hold.",
   "Claude Bridge connects you to Claude Code: coding agents working on the person's computers. Each computer has projects (folders, named after themselves, such as Nav), and each project has sessions: Claude Code conversations with their own names. You can't see their code yourself.",
   "Naming: every session tool takes `session`: the session's name, its project's name as the person says it, or an id from list_sessions; it can be left out when one session is watched or open. Add `device` (a computer's name) only when the person has more than one computer and it matters. There is no switching: name the session on every call. Sessions open in the desktop app or a terminal as the computer is set; pass `open_in` only when the person says where.",
   "Which tool: 'what is open, what is X doing, anything new' is list_sessions (it shows `unheard` beside sessions with replies you haven't heard). 'What did it say, read me the last few, what happened since I looked, find the error it mentioned' is read_session: the transcript itself, whole, no model, cheap. 'I've been at the computer for hours, give me the full picture' is catch_up: a complete summary for carrying on, written by a model on the computer; use it when taking over a session, not for the last message. 'Why did it…' or a question needing files checked is ask.",
@@ -44,6 +45,7 @@ const tool = (
 });
 
 export const TOOLS = [
+  tool("get_instructions", "Read the person's instructions", "The person's own instructions for how you talk and behave with them, written in the Claude Bridge panel. Call it first in every conversation.", {}),
   tool("list_sessions", "List open sessions", "Open sessions by computer: name, project, id, side chat or not, working and on what, watched, unheard replies; offline computers too.", {}),
   tool("list_projects", "List projects", "A computer's projects (folders), most recent first, with how many sessions are open in each.", { device: DEVICE }),
   tool(
@@ -161,4 +163,12 @@ export const TOOLS = [
     false,
   ),
   tool("show_screen", "Show a computer's screen", "A screenshot of a computer's screen now, with a private link. When the person asks to see their screen.", { device: DEVICE }),
+  tool(
+    "report_problem",
+    "Report a problem with Claude Bridge",
+    "When the person asks you to report something that went wrong with Claude Bridge: write one paragraph about what actually happened (what was asked, which tool you called, what came back, what was wrong), and send it. It is kept for the people building Claude Bridge to read and fix. Works while paused too.",
+    { paragraph: { type: "string", description: "One paragraph: what actually happened, factually." } },
+    ["paragraph"],
+    false,
+  ),
 ];

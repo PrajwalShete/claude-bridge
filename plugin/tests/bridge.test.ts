@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { filesTouched } from '../hooks/catchup'
-import { decodeCursor, exchangesFrom, page } from '../hooks/transcript'
+import { exchangesFrom, page } from '../hooks/transcript'
 import { changesOf } from '../hooks/claude'
 import { toolResult } from '../hooks/inside'
 import { cleanPrompt, isPersonPrompt } from '../hooks/state'
@@ -142,21 +142,20 @@ test('the transcript gives exchanges labelled by origin, skipping compaction, in
 
 test('read_session pages never cut a message: an oversized one continues exactly where it stopped', () => {
   const long = (tag: string, n: number) => `${tag} begins. ${'All of it. '.repeat(Math.ceil(n / 11)).slice(0, n)} ${tag} ends.`
-  const x = (id: string, n: number) => ({ id, from: 'computer', at: '', message: `ask ${id}`, reply: long(id, n), changes: [], finishedAt: 't' })
-  const selection = [x('a', 3_000), x('b', 25_000)]
+  const x = (id: string, n: number, start: number) => ({ id, start, end: start + 1, from: 'computer', at: '', message: `ask ${id}`, reply: long(id, n), changes: [], finishedAt: 't' })
+  const selection = [x('a', 3_000, 0), x('b', 25_000, 10)]
   const first = page(selection, 10_000)
   expect((first.items[0] as { reply: string }).reply).toBe(long('a', 3_000))
-  expect(first.next).toBeDefined()
+  expect(first.stop).toBeDefined()
   // Follow the pages to the end and put b's reply back together.
   let reply = ''
-  let next = first.next
+  let stop = first.stop
   let pages = 0
-  while (next && pages++ < 10) {
-    const c = decodeCursor(next)!
-    const from = selection.findIndex(e => e.id === c.s)
-    const p = page(selection.slice(from), 10_000, c.o)
+  while (stop && pages++ < 10) {
+    const rest = selection.slice(stop.index)
+    const p = page(rest, 10_000, stop.offset)
     for (const item of p.items as Array<{ reply?: string }>) reply += item.reply ?? ''
-    next = p.next
+    stop = p.stop ? { index: stop.index + p.stop.index, offset: p.stop.offset } : undefined
   }
   expect(reply).toBe(long('b', 25_000))
 })
@@ -197,3 +196,11 @@ test('the Helper programs setting shows in Settings, with a note when connected 
   await ui.unmount()
 })
 
+
+test('the panel has the box for the instructions to the Claude app', async ($, on) => {
+  mock.clock(on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ key: 'instructions' })).toBeDefined()
+  expect(await ui.find({ text: /Instructions for the Claude app/ })).toBeDefined()
+  await ui.unmount()
+})

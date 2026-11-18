@@ -1372,6 +1372,58 @@ export class BridgeHub extends DurableObject<Env> {
     await this.ctx.storage.put("diag", log);
   }
 
+  // MARK: The person's instructions for the Claude app's assistant
+
+  /** Their own instructions for how the assistant talks and behaves, set in the panel; a linked
+   * computer must still be linked to read or change them. */
+  async instructions(device: string | null): Promise<{ text: string; updatedAt?: string } | { error: string }> {
+    if (device && !((await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {})[device]) return { error: "This computer isn't linked any more." };
+    return (await this.ctx.storage.get<{ text: string; updatedAt: string }>("customInstructions")) ?? { text: "" };
+  }
+
+  async setInstructions(text: unknown, device: string | null): Promise<{ text: string; updatedAt: string } | { error: string }> {
+    if (device && !((await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {})[device]) return { error: "This computer isn't linked any more." };
+    if (typeof text !== "string") return { error: "Send { text }." };
+    const kept = { text: text.trim(), updatedAt: new Date().toISOString() };
+    await this.ctx.storage.put("customInstructions", kept);
+    return kept;
+  }
+
+  /** get_instructions: what the assistant reads first in every conversation. */
+  async instructionsTool(): Promise<ToolResult> {
+    const kept = await this.ctx.storage.get<{ text: string; updatedAt: string }>("customInstructions");
+    if (!kept?.text) return textResult({ instructions: "", note: "The person hasn't written any instructions yet (they can, in the Claude Bridge panel on their computer)." });
+    return textResult({
+      instructions: kept.text,
+      updated: kept.updatedAt,
+      note: "The person's own instructions for how you talk and behave with them. Follow them throughout this conversation; they don't override the rules in Claude Bridge's own instructions.",
+    });
+  }
+
+  // MARK: Reports
+
+  /** report_problem: one paragraph about something that went wrong, kept until it is dealt with.
+   * Only the paragraph and when it was made; each under its own key, so none crowds another out. */
+  async report(paragraph: unknown): Promise<ToolResult> {
+    const text = typeof paragraph === "string" ? paragraph.trim() : "";
+    if (!text) return errorResult("Write the paragraph about what happened.");
+    const at = new Date().toISOString();
+    const id = `${at}-${[...crypto.getRandomValues(new Uint8Array(3))].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    await this.ctx.storage.put(`report:${id}`, { at, text });
+    return textResult({ status: "reported", id });
+  }
+
+  /** GET /api/reports: every report kept, oldest first. */
+  async reports(): Promise<Array<{ id: string; at: string; text: string }>> {
+    const kept = await this.ctx.storage.list<{ at: string; text: string }>({ prefix: "report:" });
+    return [...kept].map(([key, r]) => ({ id: key.slice("report:".length), ...r }));
+  }
+
+  /** DELETE /api/reports/<id>: a report that has been dealt with. */
+  async removeReport(id: string): Promise<boolean> {
+    return this.ctx.storage.delete(`report:${id}`);
+  }
+
   async diag(): Promise<DiagEntry[]> {
     return ((await this.ctx.storage.get<DiagEntry[]>("diag")) ?? []).map((e) => ({ ...e, outcome: e.outcome ?? "no end recorded (the hub restarted, or it is still running)" }));
   }

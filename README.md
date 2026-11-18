@@ -118,6 +118,8 @@ question, an answer) comes back as news.
 | `rename` | Renames a session (open, or by number from the list) or a computer. |
 | `link_computer` | Links another computer from the code its panel shows; lists or removes linked computers. |
 | `show_screen` | A screenshot of a computer's screen, with a private link. |
+| `get_instructions` | Your own instructions for the assistant, written in the panel; it calls this first in every conversation. |
+| `report_problem` | Keeps one paragraph about something that went wrong, for fixing later (`GET /api/reports`). |
 
 ## In the terminal (the Claude Code CLI)
 

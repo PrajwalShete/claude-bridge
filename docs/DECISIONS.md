@@ -2,6 +2,35 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-19: reading any size of session
+
+1. **Claude Code returns at most 4 MiB per `$.fs.read`**, and a read's answer counts: bytes come
+   as base64, a third larger. So pieces are 3 MiB less 3 bytes (base64 4,194,300 characters).
+2. **Read the end first, backwards, each byte once.** Pieces are read as raw bytes and split into
+   lines by newline bytes; a line that spans two pieces is joined as bytes before decoding, so no
+   character is ever cut. Only rows that matter (messages, replies, compaction marks) are parsed.
+3. **Stop when there is enough:** the last N, everything after the last thing heard, the summary's
+   last exchange. A page resumes from a byte position (the next exchange's start and the
+   selection's end); a search page resumes from where it stopped, and also stops after 48 MB.
+4. **The summary keeps the byte where it ends**, so an update reads only what was added since; a
+   large backlog is folded in batches of 300,000 characters. The first summary is still one fork
+   (the session's own context, no file read) plus a tail read to find where it ends.
+5. **Measured live** on this session (12.83 MB) and the largest here (28.84 MB): recent reads take
+   one or two pieces (12-24 ms) whatever the size; a whole search reads each byte once (52 and
+   120 ms); a summary update reads 0.5-0.7 MB (2-3 ms).
+
+## 2026-11-19: messages from the app always go
+
+1. **No message from the app is held in the prompt box after a stop** (Prajwal): neither after the
+   person stops a session at the computer nor after `stop_session`. Holding them meant messages
+   waited on a computer nobody was at. The rule came from Claude Code dropping a plugin's prompt
+   right after an interrupt; Claude Code's own documentation of `$.prompt.submit` says no such
+   thing, so a refusal is now handled as it comes.
+2. **A refused message is tried again** every 7 s for about a minute (9 tries), each try a single
+   submit followed to its end. Only if every one is refused does it go to the prompt box, and the
+   app hears why as news. **Ask me first** and drafts still use the prompt box: the person chose them.
+3. Reports (`report_problem`) are the way to tell us when this, or anything, still goes wrong.
+
 ## 2026-11-19: the review's plan
 
 1. **Three planes:** live news (pushed), reads (`read_session`, no model), thinking (`catch_up`,

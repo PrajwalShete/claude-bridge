@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.8.0 (2026-11-19)
+
+- **Reports:** when something goes wrong, tell the Claude app to report it. Its assistant writes one
+  paragraph about what actually happened (`report_problem`), kept in the account's Durable Object
+  with only its time, even while paused. `GET /api/reports` with the key reads them;
+  `DELETE /api/reports/<id>` removes one dealt with.
+- **Your instructions for the Claude app's assistant:** a box in the panel ("Instructions for the
+  Claude app") where you write how it should talk and behave with you. The relay keeps them in the
+  account's Durable Object; the assistant reads them with `get_instructions`, which the connector
+  tells it to call first in every conversation.
+- **Reading any size of session.** `read_session` and `catch_up` read the transcript backwards
+  from its end, in raw-byte pieces under Claude Code's 4 MiB per read, each byte once, and stop as
+  soon as they have enough. Pages and searches resume from a byte position, so going far back never
+  rereads anything; a search page also stops after 48 MB and says where to go on. A summary update
+  reads only what was added since. On this session's 12.8 MB transcript: the last exchange in one
+  3 MB read (12 ms), a whole search 52 ms.
+- **Messages from the app are always sent,** never left in the prompt box: not after you stop a
+  session at the computer, nor after `stop_session`. One Claude Code refuses is tried again for
+  about a minute; only if every try fails does it go to the prompt box, and the app is told why.
+
 ## 1.7.0 (2026-11-19)
 
 From the architecture review (`docs/REVIEW-2026-11-18.md`).

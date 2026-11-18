@@ -5,6 +5,9 @@ export type LinkState = {
   connected: boolean
   /** The Claude app watches this session: its news reaches the app, and so do its questions. */
   watched: boolean
+  /** The person's own instructions for the Claude app's assistant (kept by the relay), and how saving went. */
+  instructions: string
+  instructionsNote: string
   /** The person paused Claude Bridge (from any session): the app's calls are all refused. */
   paused: boolean
   /** The connector URL to add in the Claude app, and the key to paste on its sign-in page. */

@@ -4,6 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { ToolUseSummary } from 'claude-code'
 
+import { sendEvent } from './connector'
 import { type Engine, addLog, ago, baseName, errorText, note, rt, setStatus, short, INITIAL_CLAUDE, NO_QUESTION } from './state'
 
 const claude = atom({ plugin: 'codebridge', key: 'claude' } as const, INITIAL_CLAUDE)
@@ -36,41 +37,59 @@ export async function sendMessage($: Engine, raw: string, mode: 'send' | 'draft'
 
   const { isWorking } = await read($, claude)
   if (rt.askFirst) return holdInBox($, text, 'This session is set to ask the person first')
-  if (rt.stopStands) return holdInBox($, text, 'The person stopped Claude Code a moment ago')
 
   const id = await addLog($, { kind: 'app', text, status: isWorking ? 'queued' : 'sending' })
   rt.lastSentText.id = id
   const sentAt = await $.clock.now()
 
-  // The submit resolves as its turn starts, which is when the message joins that turn, or at
-  // once with `drop` when Claude Code refuses it. Wait briefly for a refusal; a later one still
-  // puts the message back in the box.
+  // A message from the app is always sent, never left in the prompt box: whatever stopped Claude
+  // Code before (the person at the computer, or stop_session), the next message goes straight in.
+  // The submit resolves as its turn starts, which is when the message joins that turn, or at once
+  // with `drop` when Claude Code refuses it. A refusal is tried again for about a minute; only if
+  // every try is refused does the message go to the prompt box, and the app is told why, as news.
   type Submitted = { drop?: unknown } | 'pending' | { error: string }
-  const submitted = $.prompt
-    .submit({ text, asUser: true })
-    .then(result => result as Submitted)
-    .catch(error => ({ error: errorText(error) }) as Submitted)
   const refused = (o: Submitted) => o !== 'pending' && (('drop' in o && o.drop !== undefined) || 'error' in o)
-  const settled = submitted.then(async result => {
-    if (refused(result)) {
-      await note($, `send ${id} refused: ${JSON.stringify(result)}`)
-      await holdInBox($, text, 'Claude Code didn’t take it', 'held', id)
-    } else {
-      await joinTurn($, id, sentAt)
+  const submit = () =>
+    $.prompt
+      .submit({ text, asUser: true })
+      .then(result => result as Submitted)
+      .catch(error => ({ error: errorText(error) }) as Submitted)
+  // Each try is one submit, followed through to its end: never a second submit of the same try.
+  const settle = async (result: Submitted, n: number): Promise<void> => {
+    if (!refused(result)) return joinTurn($, id, sentAt)
+    await note($, `send ${id} refused (try ${n} of ${SEND_TRIES}): ${JSON.stringify(result)}`)
+    if (n < SEND_TRIES) {
+      await $.clock.sleep(SEND_RETRY_MS)
+      return settle(await submit(), n + 1)
     }
-    return result
-  })
-
-  const first = await Promise.race([settled, $.clock.sleep(1500).then(() => 'pending' as Submitted)])
-  if (refused(first)) return holdInBox($, text, 'Claude Code didn’t take it', 'held', id)
+    const why = typeof result === 'object' && 'drop' in result ? String(result.drop) : typeof result === 'object' && 'error' in result ? result.error : 'refused'
+    await holdInBox($, text, `Claude Code refused it ${SEND_TRIES} times (${why})`, 'held', id)
+    void sendEvent($, {
+      kind: 'waiting',
+      text: `Your message ${id} couldn't be sent: Claude Code refused it ${SEND_TRIES} times over a minute (${why}). It is in the prompt box on the computer.`,
+      messages: [id],
+      forApp: true,
+    })
+  }
+  const firstTry = submit()
+  const followed = firstTry.then(result => settle(result, 1))
+  // Wait briefly, so an immediate refusal is reported as being retried rather than as sent.
+  const first = await Promise.race([firstTry, $.clock.sleep(1500).then(() => 'pending' as Submitted)])
+  void followed
   return {
-    status: isWorking ? 'queued' : 'sent',
+    status: refused(first) ? 'sending' : isWorking ? 'queued' : 'sent',
     message: id,
-    note: isWorking
-      ? 'This session is busy; it takes the message as soon as it finishes. Its reply comes as an update from this session.'
-      : 'Claude Code is on it. Its reply comes as an update from this session: call wait_for_updates to hear it.',
+    note: refused(first)
+      ? "Claude Code didn't take it at once; it is being tried again for about a minute. Its reply, or why it couldn't go, comes as news."
+      : isWorking
+        ? 'This session is busy; it takes the message as soon as it finishes. Its reply comes as an update from this session.'
+        : 'Claude Code is on it. Its reply comes as an update from this session: call wait_for_updates to hear it.',
   }
 }
+
+/** How often, and how many times, a message Claude Code refused is tried again: about a minute. */
+const SEND_TRIES = 9
+const SEND_RETRY_MS = 7_000
 
 /** The message's prompt entered: it joins the turn that started for it (see MARK in state.ts). */
 async function joinTurn($: Engine, id: string, sentAt: number): Promise<void> {
@@ -144,7 +163,9 @@ export function changesOf(uses: readonly ToolUseSummary[]): string[] {
 }
 
 export async function changesOfLastTurn($: Engine): Promise<string[]> {
-  const messages = await $.session.messages()
+  // The last turn is what's wanted: its newest rows, not the 4,096 a plain read returns.
+  const got = await $.session.messages({ last: 1000 })
+  const messages = Array.isArray(got) ? got : []
   let start = 0
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!
@@ -177,7 +198,6 @@ export async function claudeStatus($: Engine): Promise<Result> {
 export async function stopClaude($: Engine): Promise<Result> {
   const { isWorking, turnId } = await read($, claude)
   if (!isWorking || !turnId) return { status: 'Claude Code was not working on anything.' }
-  rt.appStopped = true
   await $.turn.abort({ turnId })
   await addLog($, { kind: 'event', text: 'Stopped by the Claude app' })
   return { status: 'stopped' }

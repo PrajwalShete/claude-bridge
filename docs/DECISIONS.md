@@ -2,6 +2,17 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-19: the person's instructions, enforced
+
+1. **A rule in the instructions is only a request**, so the relay enforces it too: every
+   conversation must call `get_instructions` before any other tool (Prajwal).
+2. **Per conversation, by MCP session id:** `initialize` answers with an `Mcp-Session-Id`, which the
+   client sends on every call after; the hub remembers, for a week, the conversations that read the
+   instructions. Without a session id, a read within the hour is enough.
+3. **`report_problem` is never gated:** a problem can always be reported.
+4. **During a deploy** the Worker's new code reaches the hub minutes later; a gate the hub can't
+   answer yet lets the call through rather than failing every tool.
+
 ## 2026-11-19: progress of a running turn
 
 1. **Claude Code writes each step to the transcript as it happens** (checked live: a tool call two

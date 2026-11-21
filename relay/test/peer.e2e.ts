@@ -22,6 +22,8 @@ const tok = await (await fetch(`${BASE}/oauth/token`, { method: "POST", body: ne
 let n = 0;
 const rpc = async (method: string, params: any = {}) => (await (await fetch(`${BASE}/${id}/mcp`, { method: "POST", headers: { authorization: `Bearer ${tok.access_token}`, "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++n, method, params }) })).json() as any);
 const call = async (name: string, args: any = {}) => { const r = await rpc("tools/call", { name, arguments: args }); return (r.result?.content ?? []).map((c: any) => c.text ?? "").join("\n"); };
+// As the Claude app's assistant must: the person's instructions first.
+await call("get_instructions");
 await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
 
 const DEVICE = "dev-locked-mini";

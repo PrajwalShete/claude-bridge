@@ -1393,8 +1393,20 @@ export class BridgeHub extends DurableObject<Env> {
     return kept;
   }
 
+  /**
+   * Whether the person's instructions were read in this conversation (its MCP session id), before
+   * any other tool may run. A client that sends no session id must have read them within the hour.
+   */
+  async instructionsRead(conversation: string | null): Promise<boolean> {
+    if (conversation) return (await this.ctx.storage.get<number>(`instr:${conversation}`)) !== undefined;
+    return Date.now() - ((await this.ctx.storage.get<number>("instrLast")) ?? 0) < 60 * 60_000;
+  }
+
   /** get_instructions: what the assistant reads first in every conversation. */
-  async instructionsTool(): Promise<ToolResult> {
+  async instructionsTool(conversation: string | null = null): Promise<ToolResult> {
+    const now = Date.now();
+    await this.ctx.storage.put({ instrLast: now, ...(conversation ? { [`instr:${conversation}`]: now } : {}) });
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(now + 10 * 60_000);
     const kept = await this.ctx.storage.get<{ text: string; updatedAt: string }>("customInstructions");
     if (!kept?.text) return textResult({ instructions: "", note: "The person hasn't written any instructions yet (they can, in the Claude Bridge panel on their computer)." });
     return textResult({
@@ -1402,6 +1414,28 @@ export class BridgeHub extends DurableObject<Env> {
       updated: kept.updatedAt,
       note: "The person's own instructions for how you talk and behave with them. Follow them throughout this conversation; they don't override the rules in Claude Bridge's own instructions.",
     });
+  }
+
+  // MARK: Census (for the relay's operator: counts only, no content)
+
+  /** What this object is: an account's hub (how many computers it knows, how many are linked, how
+   * many are online), a link code's hub, or empty. No messages, names or keys. */
+  async census(): Promise<{ kind: "account" | "link-code" | "empty"; computers?: number; linked?: number; online?: number; openSessions?: number; lastNews?: string; expired?: boolean }> {
+    const offer = await this.ctx.storage.get<LinkOffer>("offer");
+    if (offer) return { kind: "link-code", expired: offer.expires < Date.now() };
+    const defaults = (await this.ctx.storage.get<Record<string, string>>("deviceDefaults")) ?? {};
+    const linked = (await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {};
+    const seq = await this.ctx.storage.get<number>("seq");
+    if (!Object.keys(defaults).length && !Object.keys(linked).length && seq === undefined) return { kind: "empty" };
+    const last = seq ? await this.ctx.storage.get<FeedEvent>(feedKey(seq)) : undefined;
+    return {
+      kind: "account",
+      computers: Object.keys(defaults).length,
+      linked: Object.keys(linked).length,
+      online: (await this.devices()).filter((d) => d.online).length,
+      openSessions: this.sessions().length,
+      ...(last ? { lastNews: new Date(last.at).toISOString().slice(0, 10) } : {}),
+    };
   }
 
   // MARK: Reports
@@ -1669,6 +1703,10 @@ export class BridgeHub extends DurableObject<Env> {
     const offer = await this.ctx.storage.get<LinkOffer>("offer");
     if (offer && offer.expires < now) await this.ctx.storage.delete("offer");
     await this.pruneFeed();
+    // Conversations that read the instructions are remembered a week.
+    const marks = await this.ctx.storage.list<number>({ prefix: "instr:" });
+    const stale = [...marks].filter(([, at]) => at < now - 7 * 24 * 60 * 60_000).map(([k]) => k);
+    for (let i = 0; i < stale.length; i += 128) await this.ctx.storage.delete(stale.slice(i, i + 128));
     const feedLeft = (await this.ctx.storage.list({ prefix: FEED_PREFIX, limit: 1 })).size;
     const kept = await this.ctx.storage.list<{ expires: number }>({ prefix: "picture:" });
     let remaining = 0;
@@ -1680,10 +1718,11 @@ export class BridgeHub extends DurableObject<Env> {
   }
 
   /** GET /api/status: the computers and the open sessions. */
-  async status(): Promise<{ devices: Array<{ name: string; online: boolean }>; sessions: unknown[] }> {
+  async status(): Promise<{ objectId: string; devices: Array<{ name: string; online: boolean }>; sessions: unknown[] }> {
     const watch = await this.watchList();
     const { map } = await this.deviceNameMap();
     return {
+      objectId: this.ctx.id.toString(),
       devices: (await this.devices()).map((d) => ({ name: d.name, online: d.online })),
       sessions: this.sessions().map((s) => this.describe(s, watch, map, true)),
     };

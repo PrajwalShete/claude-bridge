@@ -156,3 +156,12 @@ The plugin starts the connector with one JSON object on stdin:
 - **`get_instructions`** (tool): the person's instructions for the assistant, `{ instructions, updated }`.
   **`GET /api/instructions`** and **`PUT /api/instructions` `{ text }`** with the account key or a
   linked computer's credential: the panel reads and saves them (`customInstructions` in the hub).
+
+## Added in 1.9.1
+
+- **`POST /api/admin/census`** `{ ids: [...] }` (at most 200 Durable Object ids, as Cloudflare's API
+  lists them) with `Authorization: Bearer <ADMIN_TOKEN>`: what each object is, in counts only
+  (`account` with how many computers it knows, how many are linked, online, open sessions, the date
+  of its last news; `link-code`, expired or not; `empty`). No messages, names or keys. Off (404)
+  unless the relay's operator sets the `ADMIN_TOKEN` secret (`wrangler secret put ADMIN_TOKEN`, 32+
+  characters). `GET /api/status` also gives the account hub's own `objectId`, to find it in a census.

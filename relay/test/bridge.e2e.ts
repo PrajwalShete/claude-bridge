@@ -117,7 +117,20 @@ function deviceAgent(id: string, name: string, projects: Array<{ name: string; f
 const opened: any[] = [];
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
-check(/^1\.9\.0\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+check(/^1\.9\.1\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+// The person's instructions come first in every conversation: nothing else runs until they're read.
+const mcp = (sid: string | null, method: string, params: any = {}) =>
+  fetch(`${BASE}/${id}/mcp`, { method: "POST", headers: { authorization: `Bearer ${tok.access_token}`, "content-type": "application/json", ...(sid ? { "Mcp-Session-Id": sid } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: ++n, method, params }) });
+const conv1 = await mcp(null, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "conv", version: "1" } });
+const sid = conv1.headers.get("mcp-session-id");
+const text = async (res: Response) => ((await res.json()) as any).result?.content?.map((c: any) => c.text ?? "").join("\n") ?? "";
+const refused = await text(await mcp(sid, "tools/call", { name: "list_sessions", arguments: {} }));
+const read = await text(await mcp(sid, "tools/call", { name: "get_instructions", arguments: {} }));
+const allowed = await text(await mcp(sid, "tools/call", { name: "list_sessions", arguments: {} }));
+check(!!sid && refused.includes("Call get_instructions first") && read.includes("instructions") && !allowed.includes("Call get_instructions first"), "a conversation must read the person's instructions before any other tool");
+const other = (await mcp(null, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "conv2", version: "1" } })).headers.get("mcp-session-id");
+check(!!other && other !== sid && (await text(await mcp(other, "tools/call", { name: "list_sessions", arguments: {} }))).includes("Call get_instructions first"), "a new conversation must read them again");
+// Calls without a session id (as this suite's helper makes them) need a read within the hour: done above.
 const tools = (await rpc("tools/list")).result.tools.map((t: any) => t.name);
 const expected = ["list_sessions", "list_projects", "read_session", "catch_up", "ask", "send_message", "answer", "wait_for_updates", "watch_sessions", "stop_session", "start_session", "resume_session", "fork_session", "rename", "link_computer", "show_screen", "report_problem", "get_instructions"];
 check(tools.length === expected.length && expected.every((t) => tools.includes(t)), `the tools: ${tools.join(", ")}`);
@@ -329,7 +342,7 @@ const MINE = "Speak plainly and keep answers short. Tell me what failed first.\n
 const saved = await (await fetch(`${BASE}/api/instructions`, { method: "PUT", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ text: MINE }) })).json() as any;
 r = await call("get_instructions");
 check(saved.text === MINE && r.includes("Speak plainly and keep answers short.") && r.includes("Never read code aloud."), "the panel's instructions are kept, and get_instructions gives them whole, even while paused");
-check(init.result.instructions.startsWith("First, at the start of every conversation") && init.result.instructions.includes("get_instructions"), "the connector's instructions say to call get_instructions first");
+check(init.result.instructions.startsWith("Strict rule: in any conversation that touches Claude Bridge") && init.result.instructions.includes("call get_instructions"), "the connector's instructions make get_instructions the strict first step");
 check(sdp.seen.some((e) => e.t === "link" && e.paused === true), "every session hears that it is paused");
 await sdp.post("/event", { kind: "finished", text: "news while paused", forApp: true });
 ok = await sdp.post("/pause", { paused: false });

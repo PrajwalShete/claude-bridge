@@ -46,8 +46,16 @@ export async function handleMcp(req: Request, env: Env, id: string, origin: stri
 
   const hub = env.HUBS.get(env.HUBS.idFromName(id));
   const pictureBase = `${origin}/p/${id}`;
-  const responses = await Promise.all(requests.map((r) => handleRequest(r, hub, pictureBase, id, req.signal)));
-  return json(Array.isArray(body) ? responses : responses[0], 200, { "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id" });
+  // Each conversation gets its own MCP session id at initialize (the app sends it on every call
+  // after), so the rule "read the person's instructions first" holds per conversation.
+  const opening = requests.some((r) => r.method === "initialize");
+  const sent = req.headers.get("Mcp-Session-Id");
+  const conversation = opening ? crypto.randomUUID() : sent && /^[A-Za-z0-9-]{8,80}$/.test(sent) ? sent : null;
+  const responses = await Promise.all(requests.map((r) => handleRequest(r, hub, pictureBase, id, req.signal, conversation)));
+  return json(Array.isArray(body) ? responses : responses[0], 200, {
+    "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id",
+    ...(opening && conversation ? { "Mcp-Session-Id": conversation } : {}),
+  });
 }
 
 /** The server's version, from what the app sees: it changes whenever the tools or the
@@ -56,12 +64,12 @@ let versionCache: string | undefined;
 async function serverVersion(): Promise<string> {
   if (!versionCache) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ TOOLS, INSTRUCTIONS })));
-    versionCache = `1.9.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    versionCache = `1.9.1+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
   }
   return versionCache;
 }
 
-async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>, pictureBase: string, id: string, signal: AbortSignal) {
+async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>, pictureBase: string, id: string, signal: AbortSignal, conversation: string | null) {
   const ok = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
   const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id: msg.id, error: { code, message } });
   switch (msg.method) {
@@ -91,7 +99,16 @@ async function handleRequest(msg: RpcRequest, hub: DurableObjectStub<BridgeHub>,
       // A report reaches no computer, so it is taken even while paused.
       if (tool === "report_problem") return ok(await hub.report(args.paragraph));
       // The person's instructions reach no computer either.
-      if (tool === "get_instructions") return ok(await hub.instructionsTool());
+      if (tool === "get_instructions") return ok(await hub.instructionsTool(conversation));
+      // Nothing else runs in a conversation until the person's instructions have been read in it.
+      // (A hub still on older code, for a few minutes after a deploy, can't say: let the call through.)
+      if (!(await hub.instructionsRead(conversation).catch(() => true))) {
+        return ok(
+          errorResult(
+            "Call get_instructions first: the person's own instructions must be read at the start of every conversation, before anything else. Then call this tool again.",
+          ),
+        );
+      }
       if (await hub.isPaused()) {
         return ok(
           errorResult(

@@ -47,6 +47,7 @@ export default {
       if (path === "/api/diag") return diag(req, env);
       if (path === "/api/reports" || path.startsWith("/api/reports/")) return reports(req, env, path);
       if (path === "/api/instructions") return instructions(req, env);
+      if (path === "/api/admin/census" && req.method === "POST") return census(req, env);
 
       m = path.match(PICTURE_PATH);
       if (m) return picture(env, m[1], m[2]);
@@ -130,6 +131,30 @@ async function instructions(req: Request, env: Env): Promise<Response> {
     return json(out, "error" in out ? 400 : 200);
   }
   return json({ error: "GET or PUT { text }." }, 405);
+}
+
+/**
+ * POST /api/admin/census `{ ids: [...] }` with the operator's ADMIN_TOKEN (a Worker secret): what each
+ * Durable Object (by its id, as Cloudflare's API lists them) is, in counts only. Off unless the
+ * secret is set.
+ */
+async function census(req: Request, env: Env): Promise<Response> {
+  const admin = (env as unknown as { ADMIN_TOKEN?: string }).ADMIN_TOKEN;
+  const auth = req.headers.get("Authorization") ?? "";
+  if (!admin || admin.length < 32 || auth !== `Bearer ${admin}`) return text("Not found", 404);
+  const { ids } = (await req.json().catch(() => ({}))) as { ids?: unknown };
+  if (!Array.isArray(ids) || ids.length > 200) return json({ error: "Send { ids: [...] }, at most 200." }, 400);
+  const out = await Promise.all(
+    ids.map(async (raw) => {
+      const objectId = String(raw);
+      try {
+        return { id: objectId, ...(await env.HUBS.get(env.HUBS.idFromString(objectId)).census()) };
+      } catch (err) {
+        return { id: objectId, kind: "unknown", error: String(err).slice(0, 120) };
+      }
+    }),
+  );
+  return json({ objects: out });
 }
 
 /** The account a polling session's credential names, and a linked computer's credential hash for its hub to check. */

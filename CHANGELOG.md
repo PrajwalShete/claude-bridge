@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.1 (2026-11-19, relay only)
+
+- **The person's instructions always come first.** The connector's instructions make it a strict
+  rule: in any conversation that touches Claude Bridge, `get_instructions` before anything else.
+  The relay enforces it: each conversation gets its own MCP session id, and every tool but
+  `get_instructions` and `report_problem` refuses until the instructions were read in it (a client
+  that sends no session id needs a read within the hour).
+- **A census for the relay's operator:** `POST /api/admin/census` says what each Durable Object is
+  (an account, with counts of its computers; a link code; empty), in counts only, behind an
+  `ADMIN_TOKEN` secret; off unless it is set.
+
 ## 1.9.0 (2026-11-19)
 
 - **Installs from GitHub:** this repository is a Claude Code plugin marketplace.

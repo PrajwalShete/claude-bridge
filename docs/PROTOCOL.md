@@ -165,3 +165,24 @@ The plugin starts the connector with one JSON object on stdin:
   of its last news; `link-code`, expired or not; `empty`). No messages, names or keys. Off (404)
   unless the relay's operator sets the `ADMIN_TOKEN` secret (`wrangler secret put ADMIN_TOKEN`, 32+
   characters). `GET /api/status` also gives the account hub's own `objectId`, to find it in a census.
+
+## Added in 1.10.0
+
+- **`POST /mcp`**, the shared MCP address (the codebridge-app plugin's connector), works as
+  `/<id>/mcp` does, for whichever account its access token was signed in to. Unauthenticated, it
+  answers 401 with `resource_metadata="<origin>/.well-known/oauth-protected-resource/mcp"`; that
+  metadata names `resource: <origin>/mcp`.
+- **Sign-in for it:** `/oauth/authorize` takes `resource=<origin>/mcp` (or no resource) with no
+  account in it; `/oauth/approve` then takes any account's key (`cbrg_…`) and binds the code, and
+  the tokens after it, to that account. With `resource=<origin>/<id>/mcp` the key must still match
+  that id. A token works at `/mcp` and at its own account's `/<id>/mcp`, never at another's.
+
+## Added in 1.9.2
+
+- **`POST /api/admin/purge`** `{ ids: [...] }`, same token and limits as the census: for each object
+  that is a leftover (empty, an expired link code, or only the old `active` key) it removes the whole
+  store; any other object is kept, with the keys it holds. A link code's object now removes its own
+  store when the code is handed over or expires.
+- The census of an account also gives `sockets` (peers on a WebSocket, which let the object sleep)
+  and `polling` (each peer in the no-helper mode, as `<role> on <computer name>`; its held requests
+  keep the object awake, and billed, around the clock).

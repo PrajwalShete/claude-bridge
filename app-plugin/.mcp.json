@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codebridge": {
+      "type": "http",
+      "url": "https://claude-bridge.prajwalshete.com/mcp"
+    }
+  }
+}

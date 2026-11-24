@@ -85,6 +85,14 @@ in **Connection**, choose **Own account**. Then, in the Claude app: Settings, Co
 custom connector** with the panel's connector URL, and paste the key on the page that opens.
 That key is your account: keep it to yourself.
 
+**If your Claude account can't add a custom connector** (on Team and Enterprise plans only an
+Owner can), add the **codebridge-app** plugin to the Claude app instead: Customize, Plugins, add
+this repository's marketplace (`PrajwalShete/claude-bridge`) if it isn't there, then add
+**codebridge-app**. On its **Connectors** tab, connect **codebridge** and paste the same key on
+the page that opens. It is the same Claude Bridge, with the same tools, at one shared address
+(`https://claude-bridge.prajwalshete.com/mcp`); the key you paste says which account it is. Use
+one or the other, not both, or the assistant sees every tool twice.
+
 ### 3. Every other computer
 
 Install the plugin there too (step 1). Its panel's **Connection** shows a code (**Link with a
@@ -98,7 +106,7 @@ The Claude app reaches your computers through a relay, a small Cloudflare Worker
 plugin uses the one at `claude-bridge.prajwalshete.com`, run by this project's author. Each key
 gets its own isolated store there; what passes through (your messages and Claude Code's replies)
 is not kept beyond what's on its way to you (see [Architecture](docs/ARCHITECTURE.md)), but whoever
-runs a relay can read what passes through it. To run your own:
+runs a relay can read what passes through it. What the relay keeps, and for how long: [Privacy](PRIVACY.md). To run your own:
 
 ```bash
 cd relay

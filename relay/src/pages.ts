@@ -128,7 +128,7 @@ function splitApp(app: string): [string, string] {
   return m ? [m[1], m[2]] : [app, ""];
 }
 
-export function connectPage(opts: { pending: string; app: string; url: string | null; error?: string }): Response {
+export function connectPage(opts: { pending: string; app: string; url: string | null; shared?: boolean; error?: string }): Response {
   const [appName, appHost] = splitApp(opts.app);
   const id = opts.url?.match(/\/([a-f0-9]{20})\/mcp$/)?.[1] ?? "";
   const shortId = id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "your computer";
@@ -166,7 +166,7 @@ ${opts.error ? `<p class="err">${esc(opts.error)}</p>` : ""}
 <p class="hint" id="hint" aria-live="polite"></p>
 <div class="actions"><button class="btn ghost" name="action" value="deny" formnovalidate>Cancel</button><button class="btn wide" id="go" name="action" value="allow">Connect</button></div>
 </form>
-<div class="fine"><div><b>Checked, then forgotten</b>The key proves this URL is yours. It isn't stored anywhere on this server.</div><div><b>Change your mind later</b>Make a new key in the Claude Bridge panel to disconnect every app at once.</div></div>`,
+<div class="fine"><div><b>Checked, then forgotten</b>${opts.shared ? "The key says which Claude Bridge account to connect, and proves it is yours" : "The key proves this URL is yours"}. It isn't stored anywhere on this server.</div><div><b>Change your mind later</b>Make a new key in the Claude Bridge panel to disconnect every app at once.</div></div>`,
     { status: opts.error ? 400 : 200, script },
   );
 }

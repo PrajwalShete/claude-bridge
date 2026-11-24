@@ -12,6 +12,9 @@ export { BridgeHub } from "./hub";
 const MCP_PATH = new RegExp(`^/(${ID_PATTERN})/mcp/?$`);
 const PICTURE_PATH = new RegExp(`^/p/(${ID_PATTERN})/([a-f0-9]{32})\\.jpg$`);
 const PRM_PATH = new RegExp(`^/\\.well-known/oauth-protected-resource/(${ID_PATTERN})/mcp/?$`);
+/** The one address for everyone (the Claude app plugin's connector): sign-in says whose account it is. */
+const SHARED_MCP_PATH = /^\/mcp\/?$/;
+const SHARED_PRM_PATH = /^\/\.well-known\/oauth-protected-resource\/mcp\/?$/;
 const LINK_PATH = /^\/link\/([A-HJ-NP-Z2-9]{12})$/;
 
 export default {
@@ -26,6 +29,8 @@ export default {
       if (m) return handleMcp(req, env, m[1], origin);
       m = path.match(PRM_PATH);
       if (m) return json(oauth.protectedResourceMetadata(origin, m[1]));
+      if (SHARED_MCP_PATH.test(path)) return handleMcp(req, env, null, origin);
+      if (SHARED_PRM_PATH.test(path)) return json(oauth.protectedResourceMetadata(origin, null));
       if (path === "/.well-known/oauth-authorization-server") return json(oauth.authServerMetadata(origin));
 
       if (path === "/oauth/register" && req.method === "POST") return oauth.register(req, env);
@@ -47,7 +52,8 @@ export default {
       if (path === "/api/diag") return diag(req, env);
       if (path === "/api/reports" || path.startsWith("/api/reports/")) return reports(req, env, path);
       if (path === "/api/instructions") return instructions(req, env);
-      if (path === "/api/admin/census" && req.method === "POST") return census(req, env);
+      if (path === "/api/admin/census" && req.method === "POST") return census(req, env, "census");
+      if (path === "/api/admin/purge" && req.method === "POST") return census(req, env, "purge");
 
       m = path.match(PICTURE_PATH);
       if (m) return picture(env, m[1], m[2]);
@@ -138,7 +144,7 @@ async function instructions(req: Request, env: Env): Promise<Response> {
  * Durable Object (by its id, as Cloudflare's API lists them) is, in counts only. Off unless the
  * secret is set.
  */
-async function census(req: Request, env: Env): Promise<Response> {
+async function census(req: Request, env: Env, action: "census" | "purge"): Promise<Response> {
   const admin = (env as unknown as { ADMIN_TOKEN?: string }).ADMIN_TOKEN;
   const auth = req.headers.get("Authorization") ?? "";
   if (!admin || admin.length < 32 || auth !== `Bearer ${admin}`) return text("Not found", 404);
@@ -148,7 +154,8 @@ async function census(req: Request, env: Env): Promise<Response> {
     ids.map(async (raw) => {
       const objectId = String(raw);
       try {
-        return { id: objectId, ...(await env.HUBS.get(env.HUBS.idFromString(objectId)).census()) };
+        const hub = env.HUBS.get(env.HUBS.idFromString(objectId));
+        return { id: objectId, ...(action === "purge" ? await hub.purgeLeftover() : await hub.census()) };
       } catch (err) {
         return { id: objectId, kind: "unknown", error: String(err).slice(0, 120) };
       }

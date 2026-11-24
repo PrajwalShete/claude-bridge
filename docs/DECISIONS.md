@@ -2,6 +2,23 @@
 
 What was decided, and why. The newest decisions come first.
 
+## 2026-11-25: the Claude app side as a plugin
+
+1. **Why:** on Team and Enterprise plans only an Owner can add a custom connector, but members can
+   add plugins, and a plugin's remote connector works in Claude chat once the person signs in
+   (Prajwal). The custom connector stays exactly as it was; the plugin is a sibling way in.
+2. **One shared address (`/mcp`):** every install gets the same plugin file, so it can't hold a
+   per-account URL. The sign-in page already asks for the key, and the key names the account, so
+   the shared address lets the key decide. A token is bound to the account it was signed in with
+   and works only there.
+3. **A plugin of its own (codebridge-app), not inside codebridge:** Claude Code reads a plugin's
+   `.mcp.json` too, so putting the connector in codebridge would give every Claude Code session a
+   server waiting for sign-in. People who have the custom connector don't need it at all.
+4. **No secret in the plugin:** its `.mcp.json` has only the address; the key is pasted on the
+   relay's own page at sign-in, as with the custom connector.
+5. **Names:** plugin names can't start with "claude-", so it is codebridge-app, beside codebridge.
+
+
 ## 2026-11-19: the person's instructions, enforced
 
 1. **A rule in the instructions is only a request**, so the relay enforces it too: every

@@ -59,9 +59,10 @@ export function authServerMetadata(origin: string) {
   };
 }
 
-export function protectedResourceMetadata(origin: string, id: string) {
+/** One account's own connector URL, or (id null) the shared one, whose sign-in picks the account. */
+export function protectedResourceMetadata(origin: string, id: string | null) {
   return {
-    resource: `${origin}/${id}/mcp`,
+    resource: id ? `${origin}/${id}/mcp` : `${origin}/mcp`,
     authorization_servers: [origin],
     scopes_supported: [SCOPE],
     bearer_methods_supported: ["header"],
@@ -176,13 +177,17 @@ export async function authorize(req: Request, env: Env, origin: string, showErro
   const challenge = p.get("code_challenge");
   if (!challenge || p.get("code_challenge_method") !== "S256") return fail("invalid_request", "PKCE with S256 is required.");
 
+  // An account's own connector URL binds the sign-in to that account's key; the shared URL (and no
+  // resource at all) takes whichever account's key is pasted.
   let id: string | null = null;
   const resource = p.get("resource");
   if (resource) {
+    let path = "";
     try {
-      id = new URL(resource).pathname.match(/^\/([a-f0-9]{20})\/mcp\/?$/)?.[1] ?? null;
+      path = new URL(resource).pathname;
     } catch {}
-    if (!id) return fail("invalid_target", "Unknown resource. Use the connector URL shown in the Claude Bridge panel in Claude Code.");
+    id = path.match(/^\/([a-f0-9]{20})\/mcp\/?$/)?.[1] ?? null;
+    if (!id && !/^\/mcp\/?$/.test(path)) return fail("invalid_target", "Unknown resource. Use the connector URL shown in the Claude Bridge panel in Claude Code.");
   }
   const pending = await sign(env, { t: "req", c: clientId!, r: redirectUri, s: state, cc: challenge, id, exp: nowSec() + REQUEST_TTL } satisfies PendingAuth);
   return redirect(`/oauth/connect?req=${encodeURIComponent(pending)}`);
@@ -195,7 +200,7 @@ export async function connect(req: Request, env: Env, origin: string, showError:
   if (!pending) return showError("This link has expired", "Go back to your app and click Connect again.");
   const client = await getClient(env, pending.c);
   if (!client) return showError("Unknown app", "Remove the connector in your app and add it again.");
-  return connectPage({ pending: raw!, app: appLabel(client, pending.r), url: pending.id ? `${origin}/${pending.id}/mcp` : null });
+  return connectPage({ pending: raw!, app: appLabel(client, pending.r), url: pending.id ? `${origin}/${pending.id}/mcp` : null, shared: !pending.id });
 }
 
 /** POST /oauth/approve: checks the pasted token against the connector URL and returns to the app. */
@@ -210,7 +215,7 @@ export async function approve(req: Request, env: Env, origin: string, showError:
     return redirect(withParams(pending.r, { error: "access_denied", error_description: "The user declined.", state: pending.s, iss: origin }));
   }
   const key = (body.token ?? "").trim();
-  const again = (error: string) => connectPage({ pending: body.pending!, app: appLabel(client, pending.r), url: pending.id ? `${origin}/${pending.id}/mcp` : null, error });
+  const again = (error: string) => connectPage({ pending: body.pending!, app: appLabel(client, pending.r), url: pending.id ? `${origin}/${pending.id}/mcp` : null, shared: !pending.id, error });
   if (!looksLikeKey(key)) return again("That doesn't look like a Claude Bridge key. It starts with cbrg_; copy it from the Claude Bridge panel in Claude Code.");
   const id = await idFromKey(key);
   if (pending.id && pending.id !== id) return again("This key belongs to a different connector URL. Copy the key shown next to the URL you added.");

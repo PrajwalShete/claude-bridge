@@ -117,7 +117,7 @@ function deviceAgent(id: string, name: string, projects: Array<{ name: string; f
 const opened: any[] = [];
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
-check(/^1\.9\.1\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
+check(/^1\.9\.\d+\+[0-9a-f]{8}$/.test(init.result.serverInfo.version) && init.result.capabilities.tools.listChanged === true, `versioned server ${init.result.serverInfo.version}, listChanged`);
 // The person's instructions come first in every conversation: nothing else runs until they're read.
 const mcp = (sid: string | null, method: string, params: any = {}) =>
   fetch(`${BASE}/${id}/mcp`, { method: "POST", headers: { authorization: `Bearer ${tok.access_token}`, "content-type": "application/json", ...(sid ? { "Mcp-Session-Id": sid } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: ++n, method, params }) });
@@ -431,6 +431,48 @@ await nav.post("/state", { working: false, side: false, asking: 0 });
 // The diagnostic log.
 const diag = await (await fetch(`${BASE}/api/diag`, { headers: { Authorization: `Bearer ${key}` } })).json() as any;
 check(Array.isArray(diag.calls) && diag.calls.some((c: any) => c.tool === "wait_for_updates" && typeof c.ms === "number"), "GET /api/diag lists recent calls with how long they took");
+
+// The shared address (the Claude app plugin's connector): sign-in picks the account by its key.
+const prm = await (await fetch(`${BASE}/.well-known/oauth-protected-resource/mcp`)).json() as any;
+check(prm.resource === `${BASE}/mcp` && prm.authorization_servers?.[0] === BASE, "the shared address has its own resource metadata");
+const bare = await fetch(`${BASE}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) });
+check(bare.status === 401 && (bare.headers.get("WWW-Authenticate") ?? "").includes(`resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp"`), "the shared address asks for sign-in and points at its metadata");
+async function signIn(resource: string, withKey: string) {
+  const v = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const ch = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v))));
+  const az = await fetch(`${BASE}/oauth/authorize?` + new URLSearchParams({ client_id: reg.client_id, redirect_uri: "https://example.com/cb", response_type: "code", code_challenge: ch, code_challenge_method: "S256", state: "s", resource }), { redirect: "manual" });
+  const where = new URL(az.headers.get("location")!, BASE);
+  const pend = where.searchParams.get("req");
+  if (!pend) return { error: where.searchParams.get("error") };
+  const page = await (await fetch(where)).text();
+  const ok = await fetch(`${BASE}/oauth/approve`, { method: "POST", body: new URLSearchParams({ pending: pend, token: withKey, action: "allow" }), redirect: "manual" });
+  const c = new URL(ok.headers.get("location") ?? "about:blank").searchParams.get("code");
+  if (!c) return { page, error: "no code" };
+  const t = await (await fetch(`${BASE}/oauth/token`, { method: "POST", body: new URLSearchParams({ grant_type: "authorization_code", code: c, code_verifier: v, client_id: reg.client_id, redirect_uri: "https://example.com/cb" }) })).json() as any;
+  return { page, token: t.access_token as string };
+}
+const shared = await signIn(`${BASE}/mcp`, key);
+check(!!shared.token && (shared.page ?? "").includes("says which Claude Bridge account to connect"), "signing in at the shared address takes the account's key");
+const at = async (path: string, token: string, method: string, params: any = {}, session?: string) =>
+  fetch(`${BASE}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(session ? { "Mcp-Session-Id": session } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: ++n, method, params }) });
+const sInit = await at("/mcp", shared.token!, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "plugin-test", version: "1" } });
+const sSid = sInit.headers.get("Mcp-Session-Id") ?? undefined;
+await at("/mcp", shared.token!, "tools/call", { name: "get_instructions", arguments: {} }, sSid);
+const sList = await (await at("/mcp", shared.token!, "tools/call", { name: "list_sessions", arguments: {} }, sSid)).json() as any;
+const sText = (sList.result?.content ?? []).map((c: any) => c.text ?? "").join("\n");
+check(!sList.result?.isError && sText.includes("Nav") , "the shared address reaches the signed-in account's sessions");
+const key2 = "cbrg_" + b64url(crypto.getRandomValues(new Uint8Array(32)));
+const acct2 = await signIn(`${BASE}/mcp`, key2);
+const cross = await at(`/${id}/mcp`, acct2.token!, "tools/list");
+check(!!acct2.token && cross.status === 401, "another account's sign-in can't reach this account's own address");
+const oInit = await at("/mcp", acct2.token!, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "plugin-test", version: "1" } });
+const oSid = oInit.headers.get("Mcp-Session-Id") ?? undefined;
+await at("/mcp", acct2.token!, "tools/call", { name: "get_instructions", arguments: {} }, oSid);
+const oList = await (await at("/mcp", acct2.token!, "tools/call", { name: "list_sessions", arguments: {} }, oSid)).json() as any;
+const oText = (oList.result?.content ?? []).map((c: any) => c.text ?? "").join("\n");
+check(!oText.includes("Nav"), "at the shared address, another account sees only its own (none of this account's sessions)");
+const wrong = await signIn(`${BASE}/abc/mcp`, key);
+check(wrong.error === "invalid_target", "an unknown resource is refused");
 
 for (const c of [nav, sdp, ...opened]) c.p.kill();
 mac.close();

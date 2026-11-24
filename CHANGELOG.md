@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.10.0 (2026-11-25)
+
+- **Claude Bridge as a Claude app plugin**, for accounts that can't add a custom connector: the
+  new **codebridge-app** plugin in this marketplace carries the connector. Add it in the Claude
+  app, connect it, paste your key: the same tools, in chat and voice mode.
+- **One shared address, `/mcp`**, beside each account's own `/<id>/mcp`. Signing in there takes
+  any account's key and connects that account; a token only ever reaches the account it was
+  signed in with. Its own resource metadata is at `/.well-known/oauth-protected-resource/mcp`.
+- **[Privacy](PRIVACY.md):** what the relay keeps, and for how long.
+- The admin census also says, per account, how many peers are on a socket and which ones poll.
+
+## 1.9.2 (2026-11-21, relay only)
+
+- **No more leftover Durable Objects.** A link code's object used to keep its storage after the code
+  was used or expired, so every 10-minute code a waiting computer offered left an object behind
+  (2,023 of them). Now the whole store is removed (`deleteAll`, and its alarm) when a code is handed
+  over or expires, and any hub whose storage is empty at its alarm removes itself.
+- **`POST /api/admin/purge`** removes old leftovers by id: an expired link code, an empty store, or
+  the prototype's lone `active` key; anything else is kept and said why.
+
 ## 1.9.1 (2026-11-19, relay only)
 
 - **The person's instructions always come first.** The connector's instructions make it a strict

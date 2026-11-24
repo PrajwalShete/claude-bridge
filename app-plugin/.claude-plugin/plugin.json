@@ -1,0 +1,12 @@
+{
+  "name": "codebridge-app",
+  "version": "1.0.0",
+  "description": "Claude Bridge in the Claude app as a plugin, for accounts that can't add a custom connector: talk to your Claude Code sessions from chat and voice mode. Sign in with the key from the Claude Bridge panel in Claude Code.",
+  "author": {
+    "name": "Prajwal Shete"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/PrajwalShete/claude-bridge",
+  "repository": "https://github.com/PrajwalShete/claude-bridge",
+  "privacyPolicyUrl": "https://github.com/PrajwalShete/claude-bridge/blob/main/PRIVACY.md"
+}

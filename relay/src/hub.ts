@@ -423,7 +423,8 @@ export class BridgeHub extends DurableObject<Env> {
       if (!offer || offer.expires < Date.now()) return { expired: true as const };
       if (offer.secret && offer.secret !== secretHash) return { error: "Not the computer that offered this code." };
       if (!offer.credential) return null;
-      await this.ctx.storage.delete("offer");
+      // Handed over once: the code's whole store goes (its database and timer too), not only the entry.
+      await this.wipe();
       return { credential: offer.credential };
     };
     const now = await take();
@@ -1416,24 +1417,54 @@ export class BridgeHub extends DurableObject<Env> {
     });
   }
 
+  /** Removes this object's whole store: every key, its database, its timer. */
+  private async wipe(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+  }
+
+  /**
+   * For the relay's operator: removes this object's store only if it is a leftover: nothing at all,
+   * an expired link code, or the one stale key an early prototype wrote. Never an account, never a
+   * code still waiting. Says what it did.
+   */
+  async purgeLeftover(): Promise<{ purged: boolean; why: string }> {
+    const keys = [...(await this.ctx.storage.list({ limit: 10 })).keys()];
+    const offer = await this.ctx.storage.get<LinkOffer>("offer");
+    const leftover =
+      keys.length === 0 ||
+      (keys.length === 1 && keys[0] === "offer" && !!offer && offer.expires < Date.now()) ||
+      (keys.length === 1 && keys[0] === "active");
+    if (!leftover) return { purged: false, why: `kept: holds ${keys.slice(0, 5).join(", ")}${keys.length > 5 ? ", …" : ""}` };
+    await this.wipe();
+    return { purged: true, why: keys.length ? `removed: ${keys[0]}` : "removed: empty" };
+  }
+
   // MARK: Census (for the relay's operator: counts only, no content)
 
   /** What this object is: an account's hub (how many computers it knows, how many are linked, how
    * many are online), a link code's hub, or empty. No messages, names or keys. */
-  async census(): Promise<{ kind: "account" | "link-code" | "empty"; computers?: number; linked?: number; online?: number; openSessions?: number; lastNews?: string; expired?: boolean }> {
+  async census(): Promise<{ kind: "account" | "link-code" | "empty"; computers?: number; linked?: number; online?: number; openSessions?: number; sockets?: number; polling?: string[]; lastNews?: string; expired?: boolean; keys?: string[]; alarm?: boolean }> {
+    // The names of what is stored (never the values), to tell leftovers from data that matters.
+    const keys = [...(await this.ctx.storage.list({ limit: 50 })).keys()].map((k) => k.replace(/:.*/, ":…"))
+    const names = [...new Set(keys)]
     const offer = await this.ctx.storage.get<LinkOffer>("offer");
-    if (offer) return { kind: "link-code", expired: offer.expires < Date.now() };
+    if (offer) return { kind: "link-code", expired: offer.expires < Date.now(), keys: names };
     const defaults = (await this.ctx.storage.get<Record<string, string>>("deviceDefaults")) ?? {};
     const linked = (await this.ctx.storage.get<Record<string, LinkedDevice>>("linked")) ?? {};
     const seq = await this.ctx.storage.get<number>("seq");
-    if (!Object.keys(defaults).length && !Object.keys(linked).length && seq === undefined) return { kind: "empty" };
+    if (!Object.keys(defaults).length && !Object.keys(linked).length && seq === undefined) return { kind: "empty", keys: names, alarm: (await this.ctx.storage.getAlarm()) !== null };
     const last = seq ? await this.ctx.storage.get<FeedEvent>(feedKey(seq)) : undefined;
+    const { map } = await this.deviceNameMap();
     return {
       kind: "account",
       computers: Object.keys(defaults).length,
       linked: Object.keys(linked).length,
       online: (await this.devices()).filter((d) => d.online).length,
       openSessions: this.sessions().length,
+      // How each connected peer reaches the relay: a socket lets this object sleep, a poll keeps it awake.
+      sockets: this.ctx.getWebSockets().length,
+      polling: [...this.polling.values()].map((p) => `${p.meta.role} on ${p.meta.device ? (map.get(p.meta.device) ?? "?") : "?"}`),
       ...(last ? { lastNews: new Date(last.at).toISOString().slice(0, 10) } : {}),
     };
   }
@@ -1701,7 +1732,8 @@ export class BridgeHub extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const now = Date.now();
     const offer = await this.ctx.storage.get<LinkOffer>("offer");
-    if (offer && offer.expires < now) await this.ctx.storage.delete("offer");
+    // A code nobody took: its whole store goes, so nothing is left behind.
+    if (offer && offer.expires < now) return this.wipe();
     await this.pruneFeed();
     // Conversations that read the instructions are remembered a week.
     const marks = await this.ctx.storage.list<number>({ prefix: "instr:" });
@@ -1715,6 +1747,8 @@ export class BridgeHub extends DurableObject<Env> {
       else remaining++;
     }
     if (remaining > 0 || feedLeft > 0) await this.ctx.storage.setAlarm(now + 10 * 60_000);
+    // A store with nothing left in it is removed whole (an empty database still counts as stored data).
+    else if ((await this.ctx.storage.list({ limit: 1 })).size === 0) await this.wipe();
   }
 
   /** GET /api/status: the computers and the open sessions. */

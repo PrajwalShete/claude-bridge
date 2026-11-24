@@ -10,18 +10,22 @@ import { json } from "./util";
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 type RpcRequest = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 
-export async function handleMcp(req: Request, env: Env, id: string, origin: string): Promise<Response> {
+/** `address` is the account id in an account's own connector URL (`/<id>/mcp`), or null at the
+ * shared one (`/mcp`, the Claude app plugin's), where the signed-in account is whichever the token names. */
+export async function handleMcp(req: Request, env: Env, address: string | null, origin: string): Promise<Response> {
   const auth = req.headers.get("Authorization");
   const token = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : null;
   const granted = token ? await validateAccessToken(env, token) : null;
-  if (granted !== id) {
-    const challenge = [`resource_metadata="${origin}/.well-known/oauth-protected-resource/${id}/mcp"`, `scope="mcp"`];
+  if (!granted || (address !== null && granted !== address)) {
+    const where = address ? `${address}/mcp` : "mcp";
+    const challenge = [`resource_metadata="${origin}/.well-known/oauth-protected-resource/${where}"`, `scope="mcp"`];
     if (token) challenge.unshift(`error="invalid_token"`);
     return json({ error: "unauthorized", error_description: "Connect this server from your MCP client to sign in." }, 401, {
       "WWW-Authenticate": `Bearer ${challenge.join(", ")}`,
     });
   }
   if (req.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
+  const id = granted;
 
   let body: unknown;
   try {
@@ -64,7 +68,7 @@ let versionCache: string | undefined;
 async function serverVersion(): Promise<string> {
   if (!versionCache) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ TOOLS, INSTRUCTIONS })));
-    versionCache = `1.9.1+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    versionCache = `1.10.0+${[...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
   }
   return versionCache;
 }
